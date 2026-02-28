@@ -13,9 +13,10 @@ export class UpdateClause<T extends Record<string, any>> extends Clause {
         const args: any[] = []
 
         const template = columns
-            .map((key, index) => {
+            .map((key) => {
                 args.push(this.updateMap[key])
-                return `${key.toString()} = $${currentArgCounter + index}`
+                currentArgCounter ++
+                return `${key.toString()} = $${currentArgCounter - 1}`
             }).join(', ')
 
 

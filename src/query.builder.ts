@@ -48,7 +48,7 @@ export class QueryBuilder {
             const isStatic = !values.some(value => value instanceof Clause)
             this.cache.set(strings, {text: result.text, isStatic})
         }
-
+        
         return result
     }
 }
