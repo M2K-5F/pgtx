@@ -1,8 +1,8 @@
 import { Clause, SQLWithArgs } from "./base.clause";
 
-export class StaticClause extends Clause {
+export class StaticClause<T extends string> extends Clause {
     constructor(
-        readonly value: string
+        readonly value: T
     ) {
         super()
     }
@@ -13,6 +13,6 @@ export class StaticClause extends Clause {
 }
 
 
-export function staticClause(value: any): StaticClause {
-    return new StaticClause(String(value))
+export function staticClause<T extends string>(value: T): StaticClause<T> {
+    return new StaticClause(value)
 }

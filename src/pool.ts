@@ -1,43 +1,58 @@
-import {Pool, PoolConfig} from "pg"
-import { Clause } from "./base.clause"
+import {Pool, QueryResultRow} from "pg"
+import { Connection, PgtxPoolConfig, QueryBuild, Transaction } from "./types"
+import { QueryBuilder } from "./query.builder"
 
-type PoolConf = PoolConfig
+const builder = new QueryBuilder()
 
-class PgtxPool {
+export class PgtxPool {
     private pool: Pool
 
     constructor(
-        config: PoolConf
+        config: PgtxPoolConfig
     ) {
         this.pool = new Pool(config)
     }
 
-    public execute(strings: TemplateStringsArray, ...values: any[]) {
-        const templateLength = strings.length
+    public async query<T extends QueryResultRow>(strings: TemplateStringsArray, ...values: any[]) {
+        const {text, args} = builder.cachedBuild(strings, values)
+        return (await this.pool.query<T>(text, args)).rows
+    }
 
-        let argumentCounter = 1
-        
-        let query = ''
-        let args: any[] = []
+    public async begin<T>(callback: (tx: Transaction) => Promise<T>): Promise<T> {
+        const tx = await this.pool.connect()
 
-        strings.forEach((template, index) => {
-            query += template
-            if (index === templateLength - 1) return
+        const txQuerier = new Querier(tx)
 
-            const value = values[index]
+        try {
+            await tx.query("BEGIN")
 
-            if (value instanceof Clause) {
-                const result = value.map(argumentCounter)
-                argumentCounter = result.counter
-                query += result.template
-                args.push(...result.args)
-            } else {
-                args.push(value)
-                query += `$${argumentCounter}`
-                argumentCounter++
-            }
-        })
+            const result = await callback(txQuerier)
 
-        return {query, args}
+            await tx.query("COMMIT")
+
+            return result
+        } 
+        catch (err) {
+            await tx.query("ROLLBACK")
+            throw err
+        }
+        finally {
+            tx.release()
+        }
     }
 }
+
+export class Querier {
+    constructor(
+        readonly client: Connection
+    ) {}
+    
+    public async query<T extends QueryResultRow = any>(strings: TemplateStringsArray, ...values: any[]): Promise<T[]> {
+        const {text, args} = builder.cachedBuild(strings, values)
+
+        const result = await this.client.query<T>(text, args)
+
+        return result.rows
+    }
+}
+
