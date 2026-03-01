@@ -4,7 +4,7 @@ import { CompiledSqlQuery } from "./utils";
 export class ArrayClause extends Clause {
     constructor(
         private readonly array: any[],
-        private separator: string = ", "
+        private readonly separator: string = ", "
     ) { super() }
 
     override map(argCounter: number): CompiledSqlQuery {
@@ -28,6 +28,6 @@ export class ArrayClause extends Clause {
     }
 }
 
-export function arrayClause(array: any[]): ArrayClause {
-    return new ArrayClause(array)
+export function arrayClause(array: any[], separator: string = ", "): ArrayClause {
+    return new ArrayClause(array, separator)
 }
