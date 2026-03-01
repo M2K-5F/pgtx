@@ -1,24 +1,33 @@
 import { Clause } from "./base.clause";
 import { CompiledSqlQuery } from "./utils";
 
-export class ArrayClause<T extends any[]> extends Clause {
+export class ArrayClause extends Clause {
     constructor(
-        private readonly array: T
+        private readonly array: any[],
+        private separator: string = ", "
     ) { super() }
 
     override map(argCounter: number): CompiledSqlQuery {
-        if (this.array.length === 0) return {text: '(NULL)', args: [], argCounter}
+        if (this.array.length === 0) return {text: 'NULL', args: [], argCounter}
+
         const args: any[] = []  
         
-        const text = `(${this.array.map(value => {
-            args.push(value)
-            return `$${argCounter++}`
-        }).join(", ")})`
+        const text = `${this.array.map(value => {
+            if (value instanceof Clause) {
+                const result = value.map(argCounter)
+                args.push(...result.args)
+                argCounter = result.argCounter
+                return result.text
+            } else {
+                args.push(value)
+                return `$${argCounter++}`
+            }
+        }).join(this.separator)}`
         
         return {text, args, argCounter}
     }
 }
 
-export function arrayClause<T extends any[]>(array: T): ArrayClause<T> {
-    return new ArrayClause<T>(array)
+export function arrayClause(array: any[]): ArrayClause {
+    return new ArrayClause(array)
 }
