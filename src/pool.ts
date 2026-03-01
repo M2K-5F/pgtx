@@ -1,8 +1,8 @@
 import {Pool, QueryResultRow} from "pg"
-import { Connection, PgtxPoolConfig, QueryBuild, Transaction } from "./types"
-import { QueryBuilder } from "./query.builder"
+import { Connection, PgtxPoolConfig, Transaction } from "./types"
+import { QueryCacher } from "./query.cacher"
 
-const builder = new QueryBuilder()
+const cacher = new QueryCacher()
 
 export class PgtxPool {
     private pool: Pool
@@ -14,7 +14,7 @@ export class PgtxPool {
     }
 
     public async query<T extends QueryResultRow>(strings: TemplateStringsArray, ...values: any[]) {
-        const {text, args} = builder.cachedBuild(strings, values)
+        const {text, args} = cacher.cachedBuild(strings, values)
         return (await this.pool.query<T>(text, args)).rows
     }
 
@@ -40,6 +40,10 @@ export class PgtxPool {
             tx.release()
         }
     }
+
+    public close() {
+        return this.pool.end()
+    }
 }
 
 export class Querier {
@@ -48,7 +52,7 @@ export class Querier {
     ) {}
     
     public async query<T extends QueryResultRow = any>(strings: TemplateStringsArray, ...values: any[]): Promise<T[]> {
-        const {text, args} = builder.cachedBuild(strings, values)
+        const {text, args} = cacher.cachedBuild(strings, values)
 
         const result = await this.client.query<T>(text, args)
 

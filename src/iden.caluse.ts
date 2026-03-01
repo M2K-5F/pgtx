@@ -1,12 +1,16 @@
-import { Clause, SQLWithArgs } from "./base.clause";
+import { Clause } from "./base.clause";
+import { CompiledSqlQuery } from "./utils";
 
 export class IdentifierClause<T extends string> extends Clause {
     constructor(
         readonly value: T
     ) {super()}
 
-    override map(currentArgCounter: number): SQLWithArgs {
-        return { template: `"${this.value}"`, args: [], counter: currentArgCounter }
+    override map(argCounter: number): CompiledSqlQuery {
+        const text = `"${this.value}"`
+        const args: any[] = []
+        
+        return { text, args, argCounter}
     }
 }
 

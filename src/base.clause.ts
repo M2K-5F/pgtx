@@ -1,5 +1,5 @@
-export abstract class Clause {
-    abstract map(currentArgCounter: number): SQLWithArgs
-}
+import { CompiledSqlQuery } from "./utils";
 
-export type SQLWithArgs = {template: string, args: any[], counter: number}
+export abstract class Clause {
+    abstract map(argCounter: number): CompiledSqlQuery
+}

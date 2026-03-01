@@ -1,12 +1,16 @@
-import { Clause, SQLWithArgs } from "./base.clause";
+import { Clause } from "./base.clause";
+import { CompiledSqlQuery } from "./utils";
 
 export class FieldsClause extends Clause {
     constructor(
         readonly fields: string[]
     ) {super()}
 
-    override map(currentArgCounter: number): SQLWithArgs {
-        return {template: this.fields.join(", "), args: [], counter: currentArgCounter}
+    override map(argCounter: number): CompiledSqlQuery {
+        const text = this.fields.join(", ")
+        const args: any[] = []
+
+        return {text, args, argCounter}
     }
 }
 

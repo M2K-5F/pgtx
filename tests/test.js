@@ -2,7 +2,7 @@ import { Pool, PoolConfig } from "pg";
 import { sql } from "..";
 import { PgtxPool } from "../src/pool";
 
-const config: PoolConfig = {
+const config = {
     host: 'localhost',
     user: 'postgres',
     password: "postgres",

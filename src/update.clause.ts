@@ -1,5 +1,6 @@
 import { AnyActionArg } from "react";
-import { Clause, SQLWithArgs } from "./base.clause";
+import { Clause } from "./base.clause";
+import { CompiledSqlQuery } from "./utils";
 
 export class UpdateClause<T extends Record<string, any>> extends Clause {
     constructor(
@@ -7,20 +8,19 @@ export class UpdateClause<T extends Record<string, any>> extends Clause {
         readonly columns?: (keyof T)[]
     ) { super() }
 
-    override map(currentArgCounter: number): SQLWithArgs {
+    override map(argCounter: number): CompiledSqlQuery {
         const columns = this.columns || (Object.keys(this.updateMap) as (keyof T)[])
         
         const args: any[] = []
 
-        const template = columns
+        const text = columns
             .map((key) => {
                 args.push(this.updateMap[key])
-                currentArgCounter ++
-                return `${key.toString()} = $${currentArgCounter - 1}`
+                return `${key.toString()} = $${argCounter++}`
             }).join(', ')
 
 
-        return {template, args, counter: currentArgCounter}
+        return {text, args, argCounter}
 
     }
 }

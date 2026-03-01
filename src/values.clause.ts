@@ -1,27 +1,26 @@
-import { Clause, SQLWithArgs } from "./base.clause";
+import { Clause } from "./base.clause";
+import { CompiledSqlQuery } from "./utils";
 
 export class InsertClause extends Clause {
     constructor(
         readonly inserts: Record<string, any>[]
     ) {super()}
 
-    override map(currentArgCounter: number): SQLWithArgs {
+    override map(argCounter: number): CompiledSqlQuery {
         const columns = Object.keys(this.inserts[0])
 
-        let template: string = `(${columns.join(', ')}) VALUES `
+        let text: string = `(${columns.join(', ')}) VALUES `
         let args: any[] = []
 
         
-        template += `${this.inserts.map(values => {
-
+        text += `${this.inserts.map(values => {
             return `(${Object.values(values).map(value => {
-                currentArgCounter++
                 args.push(value)
-                return `$${currentArgCounter - 1}`
+                return `$${argCounter++}`
             }).join(", ")})`
         }).join(", ")}`
 
-        return {template, args, counter: currentArgCounter}
+        return {text, args, argCounter}
     }
 }
 

@@ -1,4 +1,5 @@
-import { Clause, SQLWithArgs } from "./base.clause";
+import { Clause} from "./base.clause";
+import { CompiledSqlQuery } from "./utils";
 
 export class StaticClause<T extends string> extends Clause {
     constructor(
@@ -7,8 +8,8 @@ export class StaticClause<T extends string> extends Clause {
         super()
     }
 
-    override map(currentArgCounter: number): SQLWithArgs {
-        return {template: this.value, args: [], counter: currentArgCounter}
+    override map(argCounter: number): CompiledSqlQuery {
+        return {text: this.value, args: [], argCounter}
     }
 }
 
