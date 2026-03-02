@@ -1,4 +1,4 @@
-# Pgtx 🚀
+## Pgtx 🚀
 
 A lightweight, **high-performance** SQL query builder for `node-postgres` (pg).  
 Experience ORM-like convenience (auto-inserts, updates, recursive fragments) with the transparency and speed of raw SQL.
@@ -16,10 +16,22 @@ Experience ORM-like convenience (auto-inserts, updates, recursive fragments) wit
 
 ---
 
+## 📦 Installation
+
+```bash
+npm install @m2k-5f/pgtx
+# or
+yarn add @m2k-5f/pgtx
+# or
+pnpm add @m2k-5f/pgtx
+```
+
+---
+
 ## 🚀 Quick Start
 
 ```typescript
-import { sql, Pool } from 'pgtx';
+import { sql, Pool } from "@m2k-5f/pgtx";
 
 const pool = new Pool({ /* pg.PoolConfig */ })
 
@@ -56,7 +68,7 @@ await pool.query`
 // SQL: INSERT INTO users ... VALUES ($1, (SELECT id FROM roles WHERE name = $2)) WHERE status = $3 AND age > $4
 ```
 
-## 2. Transactions
+### 2. Transactions
 Automatic BEGIN, COMMIT, and ROLLBACK. Use savepoint for nested logic.
 
 ```typescript
@@ -72,7 +84,7 @@ await pool.begin(async (tx) => {
 // Main transaction commits or rolls back based on callback success
 ```
 
-## 3. Bulk Inserts (sql.insert)
+### 3. Bulk Inserts (sql.insert)
 Automatically extracts columns from the first object. Supports single objects and arrays.
 
 ```typescript
@@ -85,7 +97,7 @@ await pool.query`INSERT INTO users ${sql.insert(users)}`
 // SQL: INSERT INTO users (name, email) VALUES ($1, $2), ($3, $4)
 ```
 
-## 4. Prepared Statements
+### 4. Prepared Statements
 Pre-parse SQL on the database server for maximum performance in hot loops.
 
 ```typescript
@@ -117,7 +129,7 @@ await pool.query`SELECT * FROM users WHERE ${sql.array(conds, ' AND ')}`
 // SQL: SELECT * FROM users WHERE active = true AND age > $1
 ```
 
-## 6. Dynamic Updates (sql.update)
+### 6. Dynamic Updates (sql.update)
 Easily generate SET clauses from plain JavaScript objects. 
 
 ```typescript
