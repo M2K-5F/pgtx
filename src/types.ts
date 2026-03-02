@@ -1,9 +1,9 @@
-import { PoolClient, PoolConfig, QueryResultRow } from "pg"
+import { PoolConfig as PgPoolConfig } from "pg"
 
-export type Connection = PoolClient 
+export type PoolConfig = PgPoolConfig
 
-export interface Transaction {
-    query: <T extends QueryResultRow>(strings: TemplateStringsArray, ...values: any[]) => Promise<T[]>
+export type PreparedStatement<TResult extends any, Tparams extends any[]> = {
+    text: string, 
+    name: string,
+    execute: (...args: Tparams) => Promise<TResult[]>
 }
-
-export type PgtxPoolConfig = PoolConfig

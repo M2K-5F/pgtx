@@ -1,5 +1,5 @@
-import { Clause } from "./base.clause";
-import { CompiledSqlQuery } from "./utils";
+import { Clause } from "../clauses/base.clause";
+import { CompiledSqlQuery } from "../utils";
 
 export class ArrayClause extends Clause {
     constructor(

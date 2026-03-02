@@ -1,5 +1,5 @@
 import { Clause } from "./base.clause";
-import { CompiledSqlQuery } from "./utils";
+import { CompiledSqlQuery } from "../utils";
 
 export class IdentifierClause<T extends string> extends Clause {
     constructor(

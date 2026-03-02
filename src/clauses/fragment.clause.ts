@@ -1,5 +1,5 @@
 import { Clause,  } from "./base.clause";
-import { CompiledSqlQuery, compileSqlTemplate } from "./utils";
+import { CompiledSqlQuery, compileSqlTemplate } from "../utils";
 
 export class FragmentClause extends Clause {
     constructor(

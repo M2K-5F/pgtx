@@ -1,4 +1,4 @@
-import { Clause } from "./base.clause"
+import { Clause } from "./clauses/base.clause"
 
 export type CompiledSqlQuery = {
     text: string, 

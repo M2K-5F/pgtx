@@ -1,6 +1,6 @@
 import { AnyActionArg } from "react";
 import { Clause } from "./base.clause";
-import { CompiledSqlQuery } from "./utils";
+import { CompiledSqlQuery } from "../utils";
 
 export class UpdateClause<T extends Record<string, any>> extends Clause {
     constructor(
