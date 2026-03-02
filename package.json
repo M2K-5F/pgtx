@@ -1,28 +1,25 @@
 {
-  "name": "pgtx",
-  "version": "0.1.0",
-  "description": "simple helper for pg",
-  "main": "index.js",
+  "name": "@m2k-5f/pgtx", 
+  "version": "1.0.0",
+  "description": "Lightweight, high-performance SQL toolkit for node-postgres",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
   },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/M2K-5F/pgtx.git"
-  },
-  "author": "",
+  "keywords": ["sql", "postgres", "pg", "query-builder", "typescript", "transactions", "prepared-statements"],
+  "author": "M2K-5F",
   "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/M2K-5F/pgtx/issues"
-  },
-  "homepage": "https://github.com/M2K-5F/pgtx#readme",
-  "keywords": [],
   "dependencies": {
-    "pg": "^8.19.0"
+    "pg": "^8.11.0"
   },
   "devDependencies": {
-    "@types/pg": "^8.16.0",
-    "ts-node": "^10.9.2",
-    "tsx": "^4.21.0"
+    "@types/pg": "^8.11.0",
+    "typescript": "^5.0.0"
   }
 }

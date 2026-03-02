@@ -1,4 +1,4 @@
-import { sql, Pool } from "../index.js";
+import { sql, Pool } from "../src";
 
 const config = { 
     host: 'localhost', 

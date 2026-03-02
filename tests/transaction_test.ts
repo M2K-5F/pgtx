@@ -1,4 +1,4 @@
-import { sql, Pool } from "../index.js";
+import { sql, Pool } from "../src";
 
 const config = { /* твой конфиг */ host: 'localhost', user: 'postgres', database: 'pgtx_test', port: 5433, password: 'postgres' };
 const pool = new Pool(config);

@@ -1,4 +1,4 @@
-import { sql } from '../index.js';
+import { sql } from '../src';
 
 function assert(actual, expected, message) {
     const sActual = JSON.stringify(actual);
@@ -42,7 +42,7 @@ assert(res1.args, [status, roleName], "Deep Nesting Arguments");
  * Тест 2: Массивы (Array Clause)
  */
 const ids = [10, 20];
-const res2 = sql.fragment`SELECT * FROM ${sql.ident(T_USERS)} WHERE id IN ${sql.array(ids)}`.map(1);
+const res2 = sql.fragment`SELECT * FROM ${sql.ident(T_USERS)} WHERE id IN (${sql.array(ids)})`.map(1);
 
 assert(
     res2.text, 

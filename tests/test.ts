@@ -1,6 +1,6 @@
 import { Pool, PoolConfig } from "pg";
-import { sql } from "..";
-import { PgtxPool } from "../src/pool";
+import { sql } from "../src";
+import { Pool as PgtxPool } from "../src/pool";
 
 const config = {
     host: 'localhost',
