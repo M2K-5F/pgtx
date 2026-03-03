@@ -139,6 +139,44 @@ await pool.query`UPDATE users SET ${sql.update(data)} WHERE id = ${1}`
 // SQL: UPDATE users SET status = $1, last_login = $2 WHERE id = $3
 ```
 
+## 🔄 Null & Undefined Handling
+
+Pgtx treats `null` and `undefined` differently to match SQL semantics and JavaScript expectations:
+
+| Value | In INSERT | In UPDATE | In VALUES/Parameters | In Arrays |
+|-------|-----------|-----------|----------------------|-----------|
+| `null` | `NULL` | `NULL` | `NULL` | `NULL` |
+| `undefined` | `DEFAULT` | Field skipped | Error | Error |
+
+### Examples
+
+```typescript
+// INSERT: undefined becomes DEFAULT
+await pool.query`
+  INSERT INTO users ${sql.insert({ 
+    name: 'Alice', 
+    age: undefined,  // -> DEFAULT
+    email: null      // -> NULL
+  })}
+`
+// SQL: INSERT INTO users (name, age, email) VALUES ($1, DEFAULT, $2)
+
+// UPDATE: undefined fields are skipped
+await pool.query`
+  UPDATE users SET ${sql.update({ 
+    name: 'Bob',
+    age: undefined,  // skipped - age remains unchanged
+    deleted_at: null // explicitly set to NULL
+  })} WHERE id = 1
+`
+// SQL: UPDATE users SET name = $1, deleted_at = $2 WHERE id = 1
+
+// Arrays: undefined becomes NULL
+sql.array([1, undefined, 3]) // ❌ TypeError(`Array item at index 1 is undefined`)
+
+// Empty arrays throw (use [null] for NULL result)
+sql.array([]) // ❌ Error: Array clause is empty. Use sql.array([null])...
+```
 
 ## 🛡️ Security
 *    **SQL Injection**: Automatically uses native placeholders ($1, $2) for all values.
