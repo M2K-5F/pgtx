@@ -9,6 +9,9 @@ export class StaticClause<T extends string> extends Clause {
     }
 
     override map(argCounter: number): CompiledSqlQuery {
+        if (this.value === undefined) {
+            throw new TypeError(`Query parameter undefined at position ${argCounter}`)
+        }
         return {text: this.value, args: [], argCounter}
     }
 }

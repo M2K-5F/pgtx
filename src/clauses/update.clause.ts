@@ -5,26 +5,24 @@ import { CompiledSqlQuery } from "../utils";
 export class UpdateClause<T extends Record<string, any>> extends Clause {
     constructor(
         readonly updateMap: T,
-        readonly columns?: (keyof T)[]
     ) { super() }
 
-    override map(argCounter: number): CompiledSqlQuery {
-        const columns = this.columns || (Object.keys(this.updateMap) as (keyof T)[])
-        
+    override map(argCounter: number): CompiledSqlQuery {        
         const args: any[] = []
 
-        const text = columns
-            .map((key) => {
-                args.push(this.updateMap[key])
-                return `${key.toString()} = $${argCounter++}`
-            }).join(', ')
+        const entries = Object.entries(this.updateMap).filter(([_, value]) => value !== undefined)
 
+        if (entries.length === 0) throw new Error('Update clause has no data to update. All values are `undefined`')
+
+        const text = entries.map(([key, value]) => {
+            args.push(value)
+            return `${key} = $${argCounter++}`
+        }).join(', ')
 
         return {text, args, argCounter}
-
     }
 }
 
-export function updateClause<T extends Record<string, any>>(object: T, ...updateColumns: (keyof T)[]): UpdateClause<T> {
-    return new UpdateClause(object, updateColumns.length > 0 ? updateColumns : undefined)
+export function updateClause<T extends Record<string, any>>(object: T) {
+    return new UpdateClause<T>(object)
 }

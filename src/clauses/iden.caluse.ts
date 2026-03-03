@@ -7,6 +7,9 @@ export class IdentifierClause<T extends string> extends Clause {
     ) {super()}
 
     override map(argCounter: number): CompiledSqlQuery {
+        if (this.value === undefined) {
+            throw new TypeError(`Query parameter undefined at position ${argCounter}`)
+        }
         const text = `"${this.value}"`
         const args: any[] = []
         

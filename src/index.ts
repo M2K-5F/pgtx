@@ -4,7 +4,7 @@ import { identClause } from "./clauses/iden.caluse";
 import { Pool as PgtxPool } from "./pool";
 import { staticClause } from "./clauses/static.clause";
 import { updateClause } from "./clauses/update.clause";
-import { valueClause } from "./clauses/values.clause";  
+import { insertClause } from "./clauses/insert.clause";  
 
 /**
  * Core SQL tagging utility for Pgtx.
@@ -23,7 +23,7 @@ export const sql = {
      * sql.insert([{ id: 1 }, { id: 2 }]) 
      * // Result: (id) VALUES ($1), ($2)
      */
-    insert: valueClause,
+    insert: insertClause,
 
     /** 
      * Generates a SET clause for UPDATE queries from a JavaScript object.
