@@ -7,7 +7,7 @@ Experience ORM-like convenience (auto-inserts, updates, recursive fragments) wit
 
 ## 🔥 Why Pgtx?
 
-*   **Zero-Cost Abstraction**: Only ~2% overhead compared to raw `pg.query`.
+*   **Zero-Cost Abstraction**: Only ~2% - 0% overhead compared to raw `pg.query`.
 *   **Structural Caching**: Uses `WeakMap` to cache SQL templates. Static parts are parsed only once.
 *   **Explicit Prepared Statements**: Create and reuse prepared statements with type safety
 *   **True Recursion**: Nest `sql.fragment` anywhere. Argument numbering ($1, $2) is managed automatically across all nesting levels.
@@ -46,8 +46,8 @@ The following results were measured during sequential execution of 10,000 comple
 
 | Tool | RPS | Avg. Query Time | Performance Overhead |
 | :--- | :---: | :---: | :---: |
-| **Native `pg.query`** | **~194** | **5.15 ms** | **0% (Baseline)** |
-| **Pgtx** | **~190** | **5.27 ms** | **~2.1%** |
+| **Native `pg.query`** | **~176** | **5.696 ms** | **0% (Baseline)** |
+| **Pgtx** | **~177** | **5.664 ms** | **-0.56%(zero-cost)** |
 | Typical Node.js ORM | **~58** | 12.5+ ms | > 150% |
 
 
@@ -76,10 +76,14 @@ await pool.begin(async (tx) => {
     await tx.query`UPDATE accounts SET balance = balance - 100 WHERE id = 1`;
     
     // Nested transaction (Savepoint)
-    await tx.savepoint('inventory', async (stx) => {
+    let err = await tx.savepoint('inventory', async (stx) => {
         await stx.query`UPDATE stock SET count = count - 1 WHERE item_id = ${42}`;
         if (outOfStock) throw new Error(); // Only 'inventory' rolls back
     });
+    if (err) {
+      // Handle error
+      // tx still active & can be commited
+    }
 });
 // Main transaction commits or rolls back based on callback success
 ```

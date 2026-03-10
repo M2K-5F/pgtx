@@ -58,7 +58,7 @@ export class Connection {
      * Releases the connection back to the pool. 
      * The connection cannot be used after this call.
      */
-    public release(): void {
+    public async release(): Promise<void> {
         if (this.isReleased) return
         this.isReleased = true
         this.client.release()

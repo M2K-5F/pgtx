@@ -65,7 +65,7 @@ export class Transaction {
      *   if (error) throw new Error(); // Only this insert rolls back
      * });
      */
-    public async savepoint(name: string, callback: (tx: Transaction) => Promise<void>): Promise<void> {
+    public async savepoint(name: string, callback: (tx: Transaction) => Promise<void>): Promise<Error | null> {
         this.checkActive()
 
         await this.conn.query`SAVEPOINT ${identClause(name)}`
@@ -73,10 +73,11 @@ export class Transaction {
         try {
             await callback(this)
             await this.conn.query`RELEASE SAVEPOINT ${identClause(name)}`
+            return null
         }
         catch (err) {
             await this.conn.query`ROLLBACK TO SAVEPOINT ${identClause(name)}`
-            throw err
+            return err instanceof Error ? err : new Error(String(err))
         }
     }
 }
