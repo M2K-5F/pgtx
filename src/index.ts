@@ -2,7 +2,7 @@ import { arrayClause } from "./clauses/array.clause";
 import { fragmentClause } from "./clauses/fragment.clause";
 import { identClause } from "./clauses/iden.caluse";
 import { Pool as PgtxPool } from "./pool";
-import { staticClause } from "./clauses/static.clause";
+import { literalClause } from "./clauses/literal.clause";
 import { updateClause } from "./clauses/update.clause";
 import { insertClause } from "./clauses/insert.clause";  
 
@@ -55,7 +55,7 @@ export const sql = {
      * sql.literal('DESC') 
      * // Result: DESC
      */
-    literal: staticClause,
+    literal: literalClause,
 
     /** 
      * Creates a reusable, recursive SQL fragment.

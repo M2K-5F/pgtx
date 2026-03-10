@@ -1,7 +1,7 @@
 import { Clause} from "./base.clause";
 import { CompiledSqlQuery } from "../utils";
 
-export class StaticClause<T extends string> extends Clause {
+export class LiteralClause<T extends string> extends Clause {
     constructor(
         readonly value: T
     ) {
@@ -17,6 +17,6 @@ export class StaticClause<T extends string> extends Clause {
 }
 
 
-export function staticClause<T extends string>(value: T): StaticClause<T> {
-    return new StaticClause(value)
+export function literalClause<T extends string>(value: T): LiteralClause<T> {
+    return new LiteralClause(value)
 }

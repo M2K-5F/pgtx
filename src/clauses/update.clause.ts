@@ -1,4 +1,3 @@
-import { AnyActionArg } from "react";
 import { Clause } from "./base.clause";
 import { CompiledSqlQuery } from "../utils";
 

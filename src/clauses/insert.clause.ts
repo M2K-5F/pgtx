@@ -15,12 +15,17 @@ export class InsertClause<T extends Record<string, any>> extends Clause {
         }
 
         const columns = Object.keys(this.inserts[0])
+        const columnsCount = columns.length
 
         let text: string = `(${columns.join(', ')}) VALUES `
         let args: any[] = []
 
 
         const valuesText = this.inserts.map(values => {
+            if (Object.keys(values).length !== columnsCount) throw new Error(`
+                all rows must have the same columns
+            `)
+
             return `(${Object.values(values).map(value => {
                 if (value === undefined) return "DEFAULT"
 
@@ -35,6 +40,6 @@ export class InsertClause<T extends Record<string, any>> extends Clause {
     }
 }
 
-export function insertClause<T extends Record<string, any>>(...objects: [T, ...NoInfer<T>[]]) {
+export function insertClause<T extends Record<string, any>>(...objects: NoInfer<T>[]) {
     return new InsertClause<T>(objects)
 }

@@ -139,6 +139,5 @@ async function runComplexBenchmark() {
     console.log(`RPS: ${(iterations / (duration / 1000)).toFixed(0)}`);
 }
 
-runComplexBenchmark().catch(console.error);
-
-runBenchmark().catch(console.error)
+runComplexBenchmark().catch(console.error).finally(
+runBenchmark).catch(console.error)

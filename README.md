@@ -171,7 +171,7 @@ await pool.query`
 `
 // SQL: UPDATE users SET name = $1, deleted_at = $2 WHERE id = 1
 
-// Arrays: undefined becomes NULL
+// Arrays: undefined throw
 sql.array([1, undefined, 3]) // ❌ TypeError(`Array item at index 1 is undefined`)
 
 // Empty arrays throw (use [null] for NULL result)
