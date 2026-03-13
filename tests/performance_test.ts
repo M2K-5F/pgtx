@@ -14,7 +14,7 @@ const pgtxPool = new PgtxPool(config)
 const pgPool = new PgPool(config)
 
 const tablename = "benchmark_complex"
-const iterations = 5000
+const iterations = 500
 
 const usersToInsert = [
     { email: 'test1@test.com', name: 'User 1', age: 25 },

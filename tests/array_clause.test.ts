@@ -1,7 +1,7 @@
 import { describe, it } from "node:test"
 import  { deepEqual as assert } from "node:assert"
 import { arrayClause } from "../src/clauses/array.clause"
-import { staticClause } from "../src/clauses/static.clause"
+import { literalClause } from "../src/clauses/literal.clause"
 import { identClause } from "../src/clauses/iden.caluse"
 import { fragmentClause } from "../src/clauses/fragment.clause"
 import { sql } from "../src"
@@ -19,7 +19,7 @@ describe("array clause test", () => {
     })
 
     it("test array of clauses", () => {
-        const array = [staticClause("static"), identClause("ident"), fragmentClause`sql fragment ${"value"}`]
+        const array = [literalClause("static"), identClause("ident"), fragmentClause`sql fragment ${"value"}`]
 
         const result = arrayClause(array).map(1)
 
