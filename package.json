@@ -1,5 +1,5 @@
 {
-  "name": "@m2k-5f/pgtx", 
+  "name": "@m2k-5f/pgtx",
   "version": "1.4.0",
   "description": "Lightweight, high-performance SQL toolkit for node-postgres",
   "files": [
@@ -15,7 +15,15 @@
     "type": "git",
     "url": "git://github.com/M2K-5F/pgtx.git"
   },
-  "keywords": ["sql", "postgres", "pg", "query-builder", "typescript", "transactions", "prepared-statements"],
+  "keywords": [
+    "sql",
+    "postgres",
+    "pg",
+    "query-builder",
+    "typescript",
+    "transactions",
+    "prepared-statements"
+  ],
   "author": "M2K-5F",
   "license": "MIT",
   "homepage": "https://github.com/M2K-5F/pgtx",
@@ -34,6 +42,7 @@
   },
   "devDependencies": {
     "@types/pg": "^8.11.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.0.0"
   }
 }
