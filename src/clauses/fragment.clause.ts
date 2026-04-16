@@ -1,17 +1,26 @@
-import { Clause,  } from "./base.clause";
-import { CompiledSqlQuery, compileSqlTemplate } from "../utils";
+import { Clause,  } from "./abstract.clause";
+import { compileSqlTemplate } from "../utils";
+import { ClauseStrategyParams, CompiledSqlQuery } from "../types";
 
 export class FragmentClause extends Clause {
     constructor(
-        readonly strings: TemplateStringsArray,
-        readonly values: any[]
+        readonly templates: TemplateStringsArray,
+        readonly args: any[]
     ) {super()}
 
-    override map(currentArgCounter: number): CompiledSqlQuery {
-        return compileSqlTemplate(this.strings, this.values, currentArgCounter)
+    static create(strings: TemplateStringsArray, ...values: any[]) {
+        return new FragmentClause(strings, values)
     }
-}
 
-export function fragmentClause(strings: TemplateStringsArray, ...values: any[]) {
-    return new FragmentClause(strings, values)
+    override mapIntoQuery(params: ClauseStrategyParams) {
+        const compiled = compileSqlTemplate({
+            args: this.args, 
+            counter: params.counter, 
+            templates: this.templates
+        })
+
+        params.counter = compiled.counter
+        params.args.push(...compiled.args)
+        params.text.push(compiled.text)
+    }
 }

@@ -1,8 +1,6 @@
 import { describe, it } from "node:test"
 import { deepEqual as assert } from "node:assert"
 import { Pool, sql } from "../src"
-import { transformWithEsbuild } from "vite"
-import { log } from "node:console"
 
 const pool = new Pool({host: 'localhost', user: 'postgres', database: 'pgtx_test', port: 5433, password: 'postgres'})
 
@@ -10,7 +8,7 @@ const tablename = "transaction_isolation_test"
 
 type Table = {id: number, status: string}
 
-const up = async () => {
+const setup = async () => {
     await pool.query`
     create table if not exists ${sql.literal(tablename)} (
         id bigserial primary key,
@@ -18,14 +16,18 @@ const up = async () => {
     );`
 }
 
-const down = async () => {
+const drop = async () => {
     await pool.query`drop table ${sql.literal(tablename)};`
+    await pool.query`
+    create table if not exists ${sql.literal(tablename)} (
+        id bigserial primary key,
+        status text not null
+    );`
 }
 
 describe("transaction isolation test", async () => {
-    await up()
-    await down()
-    await up()
+    await setup()
+    await drop()
 
     await it("transaction test", async () => {
         await pool.begin(async tx => {
@@ -37,8 +39,7 @@ describe("transaction isolation test", async () => {
     })
 
     await it("isolation test", async () => {
-        await down()
-        await up()
+        await drop()
 
         await pool.begin(async tx => {
             await tx.query`insert into ${sql.ident(tablename)} ${sql.insert<Table>({id: 1, status: 'success'}, {id: 2, status: "stable"})}`
@@ -50,8 +51,7 @@ describe("transaction isolation test", async () => {
     })
 
     await it("parrallel transaction isolation test", async () => {
-        await down()
-        await up()
+        await drop()
 
         const conn1 = await pool.acquire()
         const conn2 = await pool.acquire()
@@ -75,8 +75,7 @@ describe("transaction isolation test", async () => {
     })
 
     await it("savepoints isolation test", async () => {
-        await down()
-        await up()
+        await drop()
 
         await pool.begin(async tx => {
             await tx.query`insert into ${sql.ident(tablename)} ${sql.insert<Table>({id: 1, status: 'success'})}`

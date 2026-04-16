@@ -2,6 +2,7 @@ import { PoolClient, QueryResultRow } from "pg"
 import { PreparedStatement } from "./types"
 import { Transaction } from "./transaction"
 import { QueryCacher } from "./query.cacher"
+import { ConnPraparedStatement } from "./prepared.statement"
 
 const cacher = new QueryCacher()
 
@@ -13,7 +14,8 @@ export class Connection {
     private isReleased: boolean = false
 
     constructor(
-        private readonly client: PoolClient
+        private readonly client: PoolClient,
+        private readonly enableLogs: boolean
     ) {}
 
     /**
@@ -31,7 +33,7 @@ export class Connection {
      * const stmt = await conn.prepare('get_user', 'SELECT * FROM users WHERE id = ?');
      * const rows = await stmt.execute(1);
      */
-    public async prepare<TResult extends QueryResultRow = any, TParams extends any[] = any[]>(
+    public async prepare<TResult extends QueryResultRow, TParams extends any[] = []>(
         name: string,
         sqlTemplate: string
     ): Promise<PreparedStatement<TResult, TParams>> {
@@ -39,19 +41,11 @@ export class Connection {
         let index = 1
         const text = sqlTemplate.replace(/\?/g, () => `$${index++}`)
 
-        return {
-            text: text,
-            name: name,
-            execute: async (...args: TParams) => {
-                this.checkActive()
-                const result = await this.client.query<TResult>({
-                    name,
-                    text,
-                    values: args
-                })
-                return result.rows
-            }
-        }
+        return new ConnPraparedStatement(
+            this.client,
+            text,
+            name
+        )
     }
 
     /**
@@ -80,7 +74,15 @@ export class Connection {
     public async query<T extends QueryResultRow = any>(strings: TemplateStringsArray, ...values: any[]): Promise<T[]> {
         this.checkActive()
 
-        const {text, args} = cacher.cachedBuild(strings, values, 1)
+        const {text, args} = cacher.cachedBuild({
+            templates: strings,
+            args: values,
+            counter: 1
+        })
+
+        if (this.enableLogs) {
+            console.log(`\nQUERY:     ${text}\n${args.length ? `ARGUMENTS: [${args}]\n` : ""}`)
+        }
 
         const result = await this.client.query<T>(text, args)
 

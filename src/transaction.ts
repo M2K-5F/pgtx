@@ -1,7 +1,6 @@
 import { QueryResultRow } from "pg"
 import { Connection } from "./connection"
-import { identClause } from "./clauses/iden.caluse"
-import { PreparedStatement } from "./types"
+import { IdentifierClause } from "./clauses/iden.caluse"
 
 /**
  * Represents an active SQL transaction.
@@ -68,15 +67,15 @@ export class Transaction {
     public async savepoint(name: string, callback: (tx: Transaction) => Promise<void>): Promise<Error | null> {
         this.checkActive()
 
-        await this.conn.query`SAVEPOINT ${identClause(name)}`
+        await this.conn.query`SAVEPOINT ${IdentifierClause.create(name)}`
 
         try {
             await callback(this)
-            await this.conn.query`RELEASE SAVEPOINT ${identClause(name)}`
+            await this.conn.query`RELEASE SAVEPOINT ${IdentifierClause.create(name)}`
             return null
         }
         catch (err) {
-            await this.conn.query`ROLLBACK TO SAVEPOINT ${identClause(name)}`
+            await this.conn.query`ROLLBACK TO SAVEPOINT ${IdentifierClause.create(name)}`
             return err instanceof Error ? err : new Error(String(err))
         }
     }

@@ -1,10 +1,15 @@
-import { arrayClause } from "./clauses/array.clause";
-import { fragmentClause } from "./clauses/fragment.clause";
-import { identClause } from "./clauses/iden.caluse";
 import { Pool as PgtxPool } from "./pool";
-import { literalClause } from "./clauses/literal.clause";
-import { updateClause } from "./clauses/update.clause";
-import { insertClause } from "./clauses/insert.clause";  
+import { emptyClause, EmptyClause } from "./clauses/empty.clause";
+import { WhereClause } from "./clauses/where.clause";
+import { InsertClause } from "./clauses/insert.clause";
+import { UpdateClause } from "./clauses/update.clause";
+import { ExcludeUpdateClause } from "./clauses/exclude.clause";
+import { IdentifierClause } from "./clauses/iden.caluse";
+import { LiteralClause } from "./clauses/literal.clause";
+import { FragmentClause } from "./clauses/fragment.clause";
+import { ArrayClause } from "./clauses/array.clause";
+import { Connection } from "./connection";
+import { Transaction } from "./transaction";
 
 /**
  * Core SQL tagging utility for Pgtx.
@@ -23,7 +28,7 @@ export const sql = {
      * sql.insert([{ id: 1 }, { id: 2 }]) 
      * // Result: (id) VALUES ($1), ($2)
      */
-    insert: insertClause,
+    insert: InsertClause.create,
 
     /** 
      * Generates a SET clause for UPDATE queries from a JavaScript object.
@@ -32,7 +37,41 @@ export const sql = {
      * sql.update({ status: 'active', updated_at: new Date() }) 
      * // Result: status = $1, updated_at = $2
      */
-    update: updateClause,
+    update: UpdateClause.create,
+
+    /** 
+     * Generates an assignment list for ON CONFLICT DO UPDATE using the EXCLUDED table.
+     * 
+     * @example 
+     * sql`INSERT INTO users ${sql.insert(data)} ON CONFLICT (id) DO UPDATE SET ${sql.excluded(['name', 'email'])}`
+     * // Result: name = EXCLUDED.name, email = EXCLUDED.email
+     */
+    excluded: ExcludeUpdateClause.create,
+    
+    /** 
+     * Represents a safe empty SQL fragment.
+     * Useful for dynamic query building when a condition or list might be optional.
+     * 
+     * @example 
+     * const filters = [];
+     * sql`SELECT * FROM users ${filters.length ? sql.fragment`WHERE ...` : sql.empty}`
+     * // Result: SELECT * FROM users
+     */
+    empty: emptyClause,
+
+    /**
+   * Generates a list of conditions for a WHERE clause from a JavaScript object.
+   * Works similarly to sql.update, but uses ' AND ' as a separator instead of a comma.
+   *
+   * @example
+   * sql`SELECT * FROM users WHERE ${sql.where({ active: true, role: 'admin' })}`
+   * // Result: active = $1 AND role = $2
+   *
+   * @example
+   * sql`DELETE FROM tasks WHERE ${sql.where({ id: 10, user_id: 5 })}`
+   * // Result: id = $1 AND user_id = $2
+   */
+    where: WhereClause.create,    
 
     /** 
      * Safely escapes SQL identifiers (table or column names) using double quotes.
@@ -45,7 +84,7 @@ export const sql = {
      * sql.ident('table.column') 
      * // Result: "table.column"
      */
-    ident: identClause,
+    ident: IdentifierClause.create,
 
     /** 
      * Injects raw, unescaped SQL strings. 
@@ -55,7 +94,7 @@ export const sql = {
      * sql.literal('DESC') 
      * // Result: DESC
      */
-    literal: literalClause,
+    literal: LiteralClause.create,
 
     /** 
      * Creates a reusable, recursive SQL fragment.
@@ -66,7 +105,7 @@ export const sql = {
      * sql`SELECT * FROM users WHERE ${filter} AND status = ${'active'}`
      * // Result: SELECT * FROM users WHERE age > $1 AND status = $2
      */
-    fragment: fragmentClause,
+    fragment: FragmentClause.create,
 
     /** 
      * Formats an array for dynamic lists (IN clauses, column lists, or joined conditions).
@@ -88,11 +127,17 @@ export const sql = {
      * sql`SELECT ${sql.array([sql.ident('id'), sql.ident('name')])}`
      * // Result: SELECT "id", "name"
      */
-    array: arrayClause,
+    array: ArrayClause.create,
 }
+
 
 /**
  * Main Pgtx Connection Pool. 
  * Manages connections, transactions (including SAVEPOINTs), and prepared statements.
  */
-export const Pool = PgtxPool
+
+export {Connection as Connection}
+
+export {Transaction as Transaction}
+
+export { PgtxPool as Pool }

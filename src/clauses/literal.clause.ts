@@ -1,5 +1,5 @@
-import { Clause} from "./base.clause";
-import { CompiledSqlQuery } from "../utils";
+import { ClauseStrategyParams } from "../types";
+import { Clause} from "./abstract.clause";
 
 export class LiteralClause<T extends string> extends Clause {
     constructor(
@@ -8,15 +8,15 @@ export class LiteralClause<T extends string> extends Clause {
         super()
     }
 
-    override map(argCounter: number): CompiledSqlQuery {
-        if (this.value === undefined) {
-            throw new TypeError(`Query parameter undefined at position ${argCounter}`)
+    static create<T extends string>(value: T): LiteralClause<T> {
+        if (value === undefined) {
+            throw new TypeError(`Literal undefined`)
         }
-        return {text: this.value, args: [], argCounter}
+
+        return new LiteralClause(value)
     }
-}
 
-
-export function literalClause<T extends string>(value: T): LiteralClause<T> {
-    return new LiteralClause(value)
+    override mapIntoQuery(params: ClauseStrategyParams) {
+        params.text.push(this.value)
+    }
 }

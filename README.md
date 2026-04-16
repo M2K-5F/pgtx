@@ -5,17 +5,6 @@ Experience ORM-like convenience (auto-inserts, updates, recursive fragments) wit
 
 ---
 
-## 🔥 Why Pgtx?
-
-*   **Zero-Cost Abstraction**: Only ~2% - 0% overhead compared to raw `pg.query`.
-*   **Structural Caching**: Uses `WeakMap` to cache SQL templates. Static parts are parsed only once.
-*   **Explicit Prepared Statements**: Create and reuse prepared statements with type safety
-*   **True Recursion**: Nest `sql.fragment` anywhere. Argument numbering ($1, $2) is managed automatically across all nesting levels.
-*   **No Magic**: You write SQL, `Pgtx` handles the tedious parts (placeholders, identifiers, bulk inserts).
-*   **ACID Transactions**: Reliable transaction management with automatic rollback on errors.
-
----
-
 ## 📦 Installation
 
 ```bash
@@ -24,7 +13,19 @@ npm install @m2k-5f/pgtx
 yarn add @m2k-5f/pgtx
 # or
 pnpm add @m2k-5f/pgtx
+# or 
+bun add @m2k-5f/pgtx
 ```
+## 🔥 Why Pgtx?
+
+---
+
+*   **Zero-Cost Abstraction**: Only ~2% - 0% overhead compared to raw `pg.query`.
+*   **Structural Caching**: Uses `WeakMap` to cache SQL templates. Static parts are parsed only once.
+*   **Explicit Prepared Statements**: Create and reuse prepared statements with type safety
+*   **True Recursion**: Nest `sql.fragment` anywhere. Argument numbering ($1, $2) is managed automatically across all nesting levels.
+*   **No Magic**: You write SQL, `Pgtx` handles the tedious parts (placeholders, identifiers, bulk inserts).
+*   **ACID Transactions**: Reliable transaction management with automatic rollback on errors.
 
 ---
 
@@ -39,15 +40,19 @@ const pool = new Pool({ /* pg.PoolConfig */ })
 const [user] = await pool.query<User>`SELECT * FROM users WHERE id = ${1}`
 ```
 
+---
+
+
+
 ## ⚡ Performance Benchmark
 
-The following results were measured during sequential execution of 10,000 complex `UPSERT` queries.
+The following results were measured during sequential execution of 2000 complex `UPSERT` queries.
 
 
 | Tool | RPS | Avg. Query Time | Performance Overhead |
 | :--- | :---: | :---: | :---: |
-| **Native `pg.query`** | **~176** | **5.696 ms** | **0% (Baseline)** |
-| **Pgtx** | **~177** | **5.664 ms** | **-0.56%(zero-cost)** |
+| **Native `pg.query`** | **~209** | **4.791ms** | **0% (Baseline)** |
+| **Pgtx** | **~207** | **4.827ms** | **0.76%(zero-cost)** |
 | Typical Node.js ORM | **~58** | 12.5+ ms | > 150% |
 
 
@@ -100,12 +105,23 @@ const users = [
 await pool.query`INSERT INTO users ${sql.insert(users)}`
 // SQL: INSERT INTO users (name, email) VALUES ($1, $2), ($3, $4)
 ```
+#### 3.1 UPSERT Helper (sql.excluded)
+Perfect for ON CONFLICT clauses to avoid re-typing column names.
+
+```typescript
+await pool.query`
+  INSERT INTO users ${sql.insert(data)}
+  ON CONFLICT (id) DO UPDATE 
+  SET ${sql.excluded(['name', 'email', 'updated_at'])}
+`
+// SQL: ... SET name = EXCLUDED.name, email = EXCLUDED.email, updated_at = EXCLUDED.updated_at
+```
 
 ### 4. Prepared Statements
 Pre-parse SQL on the database server for maximum performance in hot loops.
 
 ```typescript
-const stmt = await pool.prepare<User>("get_user_by_email", 'SELECT * FROM users WHERE email = ?')
+const stmt = await pool.prepare<User, [string]>("get_user_by_email", 'SELECT * FROM users WHERE email = ?')
 // `Pgtx` automatically maps standard `?` placeholders to native `$1, $2` indexes.
 
 const users = await stmt.execute('test@example.com')
@@ -142,6 +158,28 @@ const data = { status: 'pro', last_login: new Date() }
 await pool.query`UPDATE users SET ${sql.update(data)} WHERE id = ${1}`
 // SQL: UPDATE users SET status = $1, last_login = $2 WHERE id = $3
 ```
+
+### 7. Clean Filtering (sql.where)
+Generates AND-separated conditions from an object. Skips undefined values for easy dynamic filtering.
+
+```typescript
+const filters = { role: 'admin', age: undefined, active: true };
+await pool.query`SELECT * FROM users WHERE ${sql.where(filters)}`
+// SQL: SELECT * FROM users WHERE role = $1 AND active = $2
+```
+
+### 8. Conditional Logic (sql.empty)
+A safe "no-op" fragment for cleaner ternary operations in templates.
+
+```typescript
+const search = "";
+await pool.query`
+  SELECT * FROM posts 
+  ${search ? sql.fragment`WHERE title ILIKE ${search}` : sql.empty}
+`
+// Result if empty: SELECT * FROM posts
+```
+---
 
 ## 🔄 Null & Undefined Handling
 
@@ -184,5 +222,5 @@ sql.array([]) // ❌ Error: Array clause is empty. Use sql.array([null])...
 
 ## 🛡️ Security
 *    **SQL Injection**: Automatically uses native placeholders ($1, $2) for all values.
-*    **Identifiers**: `sql.ident` safely escapes table and column names using double quotes.
-*    **Connection Leaks**: `pool.query` uses try...finally internally to ensure connections are always returned to the pool.
+*    **Identifiers**: `sql.ident` escapes names (e.g., user -> "user") to prevent conflicts with SQL keywords and identifier injection.
+*    **Connection Leaks**: `pool.begin` and `pool.query` use `try...finally` internally. Prepared statements created via Pool also automatically release connections.

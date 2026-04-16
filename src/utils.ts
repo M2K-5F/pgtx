@@ -1,41 +1,38 @@
-import { Clause } from "./clauses/base.clause"
+import { Clause } from "./clauses/abstract.clause"
+import { ClauseStrategyParams, CompiledSqlQuery, CompileSQLParams } from "./types"
 
-export type CompiledSqlQuery = {
-    text: string, 
-    args: any[],
-    argCounter: number
-}
 
-export function compileSqlTemplate(strings: TemplateStringsArray, values: any[], argCounter: number): CompiledSqlQuery {
-    const templateLength = strings.length
+
+export function compileSqlTemplate(params: Readonly<CompileSQLParams>): CompiledSqlQuery {
+    const templateLength = params.templates.length
             
-    let text = ''
-    let args: any[] = []
+    const query: ClauseStrategyParams = {
+        text: [],
+        args: [],
+        counter: params.counter
+    }
 
-    strings.forEach((template, index) => {
-        text += template
+    params.templates.forEach((template, index) => {
+        query.text.push(template)
+
         if (index === templateLength - 1) return
 
-        const value = values[index]
+        const value = params.args[index]
 
         if (value instanceof Clause) {
-            const result = value.map(argCounter)
-            argCounter = result.argCounter
-            text += result.text
-            args.push(...result.args)
+            value.mapIntoQuery(query)
         } else {
-
             if (value === undefined) {
                 throw new TypeError(
-                    `Query parameter at position ${argCounter} is undefined. 
+                    `Query parameter at position ${query.counter} is undefined. 
                     Use null if you want NULL in SQL, or ensure the value is defined.`
                 )
             }
-            args.push(value)
-            text += `$${argCounter}`
-            argCounter++
+
+            query.args.push(value)
+            query.text.push(`$${query.counter++}`)
         }
     })
     
-    return {text, args, argCounter}
+    return {...query, text: query.text.join('')}
 }

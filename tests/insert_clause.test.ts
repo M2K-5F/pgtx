@@ -1,23 +1,33 @@
 import { describe, it } from "node:test"
 import { deepEqual as assert } from "node:assert"
 import { sql } from "../src"
-
 describe("insert clause test", () => {
+    const createParams = () => ({
+        text: [] as string[],
+        args: [] as any[],
+        counter: 1
+    });
+
     it("insert test", () => {
         const entities = [{id: 123, name: "Bob"}, {id: 124, name: "Alice"}]
-        const result = sql.insert(...entities).map(1)
+        const params = createParams()
 
-        assert(result.text, `(id, name) VALUES ($1, $2), ($3, $4)`)
-        assert(result.argCounter, 5)
-        assert(result.args, [123, "Bob", 124, "Alice"])
+        sql.insert(...entities).mapIntoQuery(params)
+
+        assert(params.text.join(''), `(id, name) VALUES ($1, $2), ($3, $4)`)
+        assert(params.counter, 5)
+        assert(params.args, [123, "Bob", 124, "Alice"])
     })        
 
-    it("undefined behavior test", () => {
+    it("undefined behavior test (DEFAULT)", () => {
         const entities = [{id: 123, name: "Bob"}, {id: 124, name: undefined}]
-        const result = sql.insert(...entities).map(1)
+        const params = createParams()
 
-        assert(result.text, `(id, name) VALUES ($1, $2), ($3, DEFAULT)`)
-        assert(result.argCounter, 4)
-        assert(result.args, [123, "Bob", 124])
+        sql.insert(...entities).mapIntoQuery(params)
+
+        assert(params.text.join(''), `(id, name) VALUES ($1, $2), ($3, DEFAULT)`)
+        assert(params.counter, 4)
+        assert(params.args, [123, "Bob", 124])
     })
-}) 
+
+})

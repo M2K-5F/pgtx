@@ -1,9 +1,7 @@
 {
   "name": "@m2k-5f/pgtx", 
-  "version": "1.2.0",
+  "version": "1.4.0",
   "description": "Lightweight, high-performance SQL toolkit for node-postgres",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "files": [
     "dist",
     "README.md"
@@ -23,6 +21,13 @@
   "homepage": "https://github.com/M2K-5F/pgtx",
   "bugs": {
     "url": "https://github.com/M2K-5F/pgtx/issues"
+  },
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
   },
   "dependencies": {
     "pg": "^8.11.0"

@@ -10,11 +10,11 @@ const config = {
     max: 20 
 }
 
-const pgtxPool = new PgtxPool(config)
+const pgtxPool = new PgtxPool({...config, enableLogs: false})
 const pgPool = new PgPool(config)
 
 const tablename = "benchmark_complex"
-const iterations = 500
+const iterations = 2000
 
 const usersToInsert = [
     { email: 'test1@test.com', name: 'User 1', age: 25 },
@@ -93,6 +93,7 @@ async function run() {
 
         const formatResult = (time: number) => ({
             time: `${time}ms`,
+            iterations,
             rps: (iterations / (time / 1000)).toFixed(0),
             avg: (time / iterations).toFixed(3) + 'ms'
         })

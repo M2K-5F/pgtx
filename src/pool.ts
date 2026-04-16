@@ -2,6 +2,7 @@ import { Pool as PgPool, QueryResultRow} from "pg";
 import { PoolConfig, PreparedStatement } from "./types"
 import { Connection } from "./connection"
 import { Transaction } from "./transaction"
+import { PoolPreparedStatement } from "./prepared.statement";
 
 /**
  * The main entry point for Pgtx. 
@@ -9,10 +10,12 @@ import { Transaction } from "./transaction"
  */
 export class Pool {
     private pool: PgPool
+    private enableLogs: boolean
 
     constructor(
         config: PoolConfig
     ) {
+        this.enableLogs = config.enableLogs ?? false
         this.pool = new PgPool(config)
     }
 
@@ -46,7 +49,7 @@ export class Pool {
      * const stmt = await pool.prepare<User, [string]>('get_user', 'SELECT * FROM users WHERE email = ?');
      * const users = await stmt.execute('test@example.com');
      */
-    public async prepare<TResult extends QueryResultRow = any, TParams extends any[] = any[]>(
+    public async prepare<TResult extends QueryResultRow, TParams extends any[] = []>(
         name: string,
         sqlTemplate: string
     ): Promise<PreparedStatement<TResult, TParams>> {
@@ -54,24 +57,11 @@ export class Pool {
         let index = 1
         const text = sqlTemplate.replace(/\?/g, () => `$${index++}`)
 
-        return {
+        return new PoolPreparedStatement(
+            this.pool,
             text,
-            name,
-            execute: async (...args: TParams) => {
-                const conn = await this.acquire()
-                conn['checkActive']()
-                try {
-                    const result = await conn['client'].query<TResult>({
-                        name,
-                        text,
-                        values: args
-                    })
-                    return result.rows
-                } finally {
-                    conn.release()
-                }
-            }
-        }
+            name
+        )
     }
 
     /**
@@ -80,7 +70,7 @@ export class Pool {
      */
     public async acquire(): Promise<Connection> {
         const client = await this.pool.connect()
-        return new Connection(client)
+        return new Connection(client, this.enableLogs)
     }
 
     /**

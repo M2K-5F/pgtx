@@ -1,21 +1,23 @@
-import { Clause } from "./clauses/base.clause";
-import { CompiledSqlQuery, compileSqlTemplate } from "./utils";
+import { Clause } from "./clauses/abstract.clause";
+import { CompiledSqlQuery, CompileSQLParams } from "./types";
+import { compileSqlTemplate } from "./utils";
 
 
 export class QueryCacher {
     private readonly cache = new WeakMap<TemplateStringsArray, {text: string, isStatic: boolean}>()
 
-    public cachedBuild(strings: TemplateStringsArray, values: any[], argCounter: number): CompiledSqlQuery {
-            const cached = this.cache.get(strings)
-            if (cached?.isStatic) {
-                return {text: cached.text, args: values, argCounter}
+    public cachedBuild(params: CompileSQLParams): CompiledSqlQuery {
+            const cached = this.cache.get(params.templates)
+
+            if (cached?.isStatic) {                
+                return {text: cached.text, args: params.args, counter: params.counter}
             }
-    
-            const result = compileSqlTemplate(strings, values, 1)
+            
+            const result = compileSqlTemplate(params)
     
             if (!cached) {
-                const isStatic = !values.some(value => value instanceof Clause)
-                this.cache.set(strings, {text: result.text, isStatic})
+                const isStatic = !params.args.some(value => value instanceof Clause)
+                this.cache.set(params.templates, {text: result.text, isStatic})
             }
             
             return result

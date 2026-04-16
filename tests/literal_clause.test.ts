@@ -1,27 +1,34 @@
 import { describe, it } from "node:test"
-import { deepEqual as assert } from "node:assert"
+import { deepEqual as assert, throws } from "node:assert"
 import { sql } from "../src"
 
 describe("literal clause test", () => {
-    it('literal test', () => {
-        const result = sql.literal("literal").map(1)
+    const createParams = () => ({
+        text: [] as string[],
+        args: [] as any[],
+        counter: 1
+    });
 
-        assert(result.text, "literal")
-        assert(result.argCounter, 1)
-        assert(result.args, [])
+    it('literal test', () => {
+        const params = createParams()
+        
+        sql.literal("literal").mapIntoQuery(params)
+
+        assert(params.text.join(''), "literal")
+        assert(params.counter, 1)
+        assert(params.args.length, 0)
     })
 
     it("undefined behavior test", () => {
-        try {
-            // @ts-ignore
-            const result = sql.literal(undefined).map(1) 
-        }
-        catch (err) {
-            if (err instanceof Error) {
-                assert(err.message, "Query parameter undefined at position 1")
-                return
+        throws(
+            () => {
+                // @ts-ignore
+                sql.literal(undefined)
+            },
+            {
+                name: 'TypeError',
+                message: 'Literal undefined' 
             }
-        }
-        throw new Error("undefined argument in ident must throw")
+        )
     })
 })

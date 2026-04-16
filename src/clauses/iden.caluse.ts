@@ -1,22 +1,18 @@
-import { Clause } from "./base.clause";
-import { CompiledSqlQuery } from "../utils";
+import { ClauseStrategyParams } from "../types"
+import { Clause } from "./abstract.clause"
 
 export class IdentifierClause<T extends string> extends Clause {
     constructor(
         readonly value: T
     ) {super()}
 
-    override map(argCounter: number): CompiledSqlQuery {
-        if (this.value === undefined) {
-            throw new TypeError(`Query parameter undefined at position ${argCounter}`)
-        }
-        const text = `"${this.value}"`
-        const args: any[] = []
-        
-        return { text, args, argCounter}
-    }
-}
+    static create<T extends string>(identificator: T) {
+        if (identificator === undefined) throw new TypeError("Identificator undefined")
 
-export function identClause<T extends string>(identificator: T) {
-    return new IdentifierClause<T>(identificator)
+        return new IdentifierClause<T>(identificator)
+    }
+
+    override mapIntoQuery(params: ClauseStrategyParams) {
+        params.text.push(`"${this.value}"`)
+    }
 }
