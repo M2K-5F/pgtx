@@ -1,5 +1,7 @@
 ## Pgtx 🚀
 
+[![Tests](https://github.com/M2K-5F/pgtx/actions/workflows/tests.yaml/badge.svg)](https://github.com/M2K-5F/pgtx/actions/workflows/tests.yaml)
+
 A lightweight, **high-performance** SQL query builder for `node-postgres` (pg).  
 Experience ORM-like convenience (auto-inserts, updates, recursive fragments) with the transparency and speed of raw SQL.
 
