@@ -1,8 +1,18 @@
 import { describe, it } from "node:test"
 import { deepEqual as assert } from "node:assert"
 import { Pool, sql } from "../src"
+import { PoolConfig } from "../src/types";
 
-const pool = new Pool({host: 'localhost', user: 'postgres', database: 'pgtx_test', port: 5433, password: 'postgres'})
+export const config: PoolConfig = {
+    host: process.env.PGHOST || 'localhost',
+    user: process.env.PGUSER || 'postgres',
+    password: process.env.PGPASSWORD || 'postgres',
+    database: process.env.PGDATABASE || 'pgtx_test',
+    port: Number(process.env.PGPORT) || 5433,
+    max: Number(process.env.PGMAX) || 20 
+};
+
+const pool = new Pool(config)
 
 const tablename = "transaction_isolation_test"
 

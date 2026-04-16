@@ -7,7 +7,7 @@ describe("identifier clause test", () => {
         text: [] as string[],
         args: [] as any[],
         counter: 1
-    });
+    })
 
     it("ident test", () => {
         const params = createParams()

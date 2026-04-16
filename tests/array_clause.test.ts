@@ -7,7 +7,7 @@ describe("array clause test", () => {
         text: [] as string[],
         args: [] as any[],
         counter: 1
-    });
+    })
 
     it("test array of primitive", () => {
         const array = [10, "string", true, null]

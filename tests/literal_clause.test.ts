@@ -7,7 +7,7 @@ describe("literal clause test", () => {
         text: [] as string[],
         args: [] as any[],
         counter: 1
-    });
+    })
 
     it('literal test', () => {
         const params = createParams()

@@ -8,7 +8,7 @@ describe("fragment clause test", () => {
         text: [] as string[],
         args: [] as any[],
         counter: 1
-    });
+    })
 
     it("simple text test", () => {
         const fragment = sql.fragment`WHERE name = name`

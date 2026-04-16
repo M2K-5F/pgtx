@@ -6,7 +6,7 @@ describe("insert clause test", () => {
         text: [] as string[],
         args: [] as any[],
         counter: 1
-    });
+    })
 
     it("insert test", () => {
         const entities = [{id: 123, name: "Bob"}, {id: 124, name: "Alice"}]

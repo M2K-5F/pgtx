@@ -1,14 +1,14 @@
 import { Pool as PgPool } from "pg";
 import { sql, Pool as PgtxPool } from "../src";
 
-const config = {
-    host: 'localhost',
-    user: 'postgres',
-    password: "postgres",
-    database: 'pgtx_test',
-    port: 5433,
-    max: 20 
-}
+export const config = {
+    host: process.env.PGHOST || 'localhost',
+    user: process.env.PGUSER || 'postgres',
+    password: process.env.PGPASSWORD || 'postgres',
+    database: process.env.PGDATABASE || 'pgtx_test',
+    port: Number(process.env.PGPORT) || 5433,
+    max: Number(process.env.PGMAX) || 20 
+};
 
 const pgtxPool = new PgtxPool({...config, enableLogs: false})
 const pgPool = new PgPool(config)

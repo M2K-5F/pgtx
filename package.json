@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
-    "test": "node --import tsx --test ./tests/**/*.ts"
+    "test": "node --import tsx --test ./tests/**/*.test.ts" 
   },
   "repository": {
     "type": "git",
