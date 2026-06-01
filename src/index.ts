@@ -1,13 +1,15 @@
 import { Pool as PgtxPool } from "./pool";
-import { emptyClause, EmptyClause } from "./clauses/empty.clause";
-import { WhereClause } from "./clauses/where.clause";
-import { InsertClause } from "./clauses/insert.clause";
-import { UpdateClause } from "./clauses/update.clause";
-import { ExcludeUpdateClause } from "./clauses/exclude.clause";
-import { IdentifierClause } from "./clauses/iden.caluse";
-import { LiteralClause } from "./clauses/literal.clause";
-import { FragmentClause } from "./clauses/fragment.clause";
-import { ArrayClause } from "./clauses/array.clause";
+import {
+    IdentifierClause,
+    InsertClause,
+    ArrayClause,
+    UpdateClause,
+    ExcludeUpdateClause,
+    emptyClause,
+    WhereClause,
+    LiteralClause,
+    FragmentClause,
+} from './clauses'
 import { Connection } from "./connection";
 import { Transaction } from "./transaction";
 
@@ -136,8 +138,8 @@ export const sql = {
  * Manages connections, transactions (including SAVEPOINTs), and prepared statements.
  */
 
-export {Connection as Connection}
+export { Connection as Connection }
 
-export {Transaction as Transaction}
+export { Transaction as Transaction }
 
 export { PgtxPool as Pool }

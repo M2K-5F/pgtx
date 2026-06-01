@@ -1,6 +1,6 @@
 {
   "name": "@m2k-5f/pgtx",
-  "version": "1.4.0",
+  "version": "1.4.12",
   "description": "Lightweight, high-performance SQL toolkit for node-postgres",
   "files": [
     "dist",

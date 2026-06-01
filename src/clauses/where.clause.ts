@@ -2,7 +2,7 @@ import { Clause } from "./abstract.clause";
 import { ClauseStrategyParams } from "../types";
 
 export class WhereClause<T extends Record<string, any>> extends Clause {
-    constructor(
+    private constructor(
         private _value: T,
     ) { super() }
 

@@ -3,11 +3,11 @@ import { Clause } from "./abstract.clause";
 
 
 export class EmptyClause extends Clause {
-    static new() {
+    static create() {
         return new EmptyClause()
     }
 
     mapIntoQuery(params: ClauseStrategyParams) {}
 }
 
-export const emptyClause = EmptyClause.new()
+export const emptyClause = EmptyClause.create()

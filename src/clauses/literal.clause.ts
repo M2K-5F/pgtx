@@ -2,7 +2,7 @@ import { ClauseStrategyParams } from "../types";
 import { Clause} from "./abstract.clause";
 
 export class LiteralClause<T extends string> extends Clause {
-    constructor(
+    private constructor(
         readonly value: T
     ) {
         super()

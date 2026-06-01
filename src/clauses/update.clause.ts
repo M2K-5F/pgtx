@@ -2,7 +2,7 @@ import { ClauseStrategyParams } from "../types";
 import { Clause } from "./abstract.clause";
 
 export class UpdateClause<T extends Record<string, any>> extends Clause {
-    constructor(
+    private constructor(
         readonly updateMap: T,
     ) { super() }
 

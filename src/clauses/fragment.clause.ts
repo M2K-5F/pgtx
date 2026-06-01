@@ -3,7 +3,7 @@ import { compileSqlTemplate } from "../utils";
 import { ClauseStrategyParams, CompiledSqlQuery } from "../types";
 
 export class FragmentClause extends Clause {
-    constructor(
+    private constructor(
         readonly templates: TemplateStringsArray,
         readonly args: any[]
     ) {super()}

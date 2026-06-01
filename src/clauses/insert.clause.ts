@@ -2,7 +2,7 @@ import { Clause } from "./abstract.clause";
 import { ClauseStrategyParams } from "../types";
 
 export class InsertClause<T extends Record<string, any>> extends Clause {
-    constructor(
+    private constructor(
         readonly inserts: T[]
     ) {super()}
 
