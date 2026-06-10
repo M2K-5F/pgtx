@@ -6,7 +6,6 @@ describe("literal clause test", () => {
     const createParams = () => ({
         text: [] as string[],
         args: [] as any[],
-        counter: 1
     })
 
     it('literal test', () => {
@@ -15,7 +14,6 @@ describe("literal clause test", () => {
         sql.literal("literal").mapIntoQuery(params)
 
         assert(params.text.join(''), "literal")
-        assert(params.counter, 1)
         assert(params.args.length, 0)
     })
 

@@ -77,7 +77,6 @@ export class Connection {
         const {text, args} = cacher.cachedBuild({
             templates: strings,
             args: values,
-            counter: 1
         })
 
         if (this.enableLogs) {

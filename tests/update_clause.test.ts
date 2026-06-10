@@ -6,7 +6,6 @@ describe("update clause test", () => {
     const createParams = () => ({
         text: [] as string[],
         args: [] as any[],
-        counter: 1
     });
 
     it("update clause test", () => {
@@ -17,7 +16,6 @@ describe("update clause test", () => {
 
         assert(params.text.join(''), `id = $1, name = $2`)
         assert(params.args, [123, "Alice"])
-        assert(params.counter, 3)
     })
 
     it("undefined behavior test (SKIP)", () => {
@@ -27,7 +25,6 @@ describe("update clause test", () => {
         sql.update(updateMap).mapIntoQuery(params)
 
         assert(params.text.join(''), `id = $1`)
-        assert(params.counter, 2)
         assert(params.args, [123])
     })
 })

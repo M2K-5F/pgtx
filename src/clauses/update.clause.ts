@@ -20,7 +20,7 @@ export class UpdateClause<T extends Record<string, any>> extends Clause {
             if (index) params.text.push(', ')
             
             params.args.push(value)
-            params.text.push(`${key} = $${params.counter++}`)
+            params.text.push(`${key} = $${params.args.length}`)
         })
     }
 }

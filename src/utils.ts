@@ -3,13 +3,12 @@ import { ClauseStrategyParams, CompiledSqlQuery, CompileSQLParams } from "./type
 
 
 
-export function compileSqlTemplate(params: Readonly<CompileSQLParams>): CompiledSqlQuery {
+export function compileSqlTemplate(params: Readonly<CompileSQLParams>, argOffset = 0): CompiledSqlQuery {
     const templateLength = params.templates.length
             
     const query: ClauseStrategyParams = {
         text: [],
         args: [],
-        counter: params.counter
     }
 
     params.templates.forEach((template, index) => {
@@ -24,13 +23,13 @@ export function compileSqlTemplate(params: Readonly<CompileSQLParams>): Compiled
         } else {
             if (value === undefined) {
                 throw new TypeError(
-                    `Query parameter at position ${query.counter} is undefined. 
+                    `Query parameter at position ${query.args.length + argOffset + 1} is undefined. 
                     Use null if you want NULL in SQL, or ensure the value is defined.`
                 )
             }
 
             query.args.push(value)
-            query.text.push(`$${query.counter++}`)
+            query.text.push(`$${query.args.length + argOffset}`)
         }
     })
     

@@ -10,7 +10,7 @@ export class QueryCacher {
             const cached = this.cache.get(params.templates)
 
             if (cached?.isStatic) {                
-                return {text: cached.text, args: params.args, counter: params.counter}
+                return {text: cached.text, args: params.args}
             }
             
             const result = compileSqlTemplate(params)

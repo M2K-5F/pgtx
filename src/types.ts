@@ -11,17 +11,14 @@ export type PreparedStatement<TResult extends any, Tparams extends any[]> = {
 export type CompiledSqlQuery = {
     text: string, 
     args: any[],
-    counter: number
 }
 
 export type ClauseStrategyParams = {
     text: string[],
     args: any[],
-    counter: number
 }
 
 export type CompileSQLParams = {
     templates: TemplateStringsArray,
     args: any[],
-    counter: number
 }

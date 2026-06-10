@@ -15,11 +15,9 @@ export class FragmentClause extends Clause {
     override mapIntoQuery(params: ClauseStrategyParams) {
         const compiled = compileSqlTemplate({
             args: this.args, 
-            counter: params.counter, 
             templates: this.templates
-        })
+        }, params.args.length)
 
-        params.counter = compiled.counter
         params.args.push(...compiled.args)
         params.text.push(compiled.text)
     }

@@ -32,7 +32,7 @@ export class InsertClause<T extends Record<string, any>> extends Clause {
                     if (value === undefined) return "DEFAULT"
                     
                     params.args.push(value)
-                    return `$${params.counter++}`
+                    return `$${params.args.length}`
                 })
                     .join(", ")})`
             )

@@ -28,7 +28,7 @@ export class ArrayClause extends Clause {
             } 
             else {
                 params.args.push(value)
-                params.text.push(`$${params.counter++}`)
+                params.text.push(`$${params.args.length}`)
             }
         })
     }

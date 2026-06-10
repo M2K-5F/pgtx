@@ -5,7 +5,6 @@ describe("insert clause test", () => {
     const createParams = () => ({
         text: [] as string[],
         args: [] as any[],
-        counter: 1
     })
 
     it("insert test", () => {
@@ -15,7 +14,6 @@ describe("insert clause test", () => {
         sql.insert(...entities).mapIntoQuery(params)
 
         assert(params.text.join(''), `(id, name) VALUES ($1, $2), ($3, $4)`)
-        assert(params.counter, 5)
         assert(params.args, [123, "Bob", 124, "Alice"])
     })        
 
@@ -26,7 +24,6 @@ describe("insert clause test", () => {
         sql.insert(...entities).mapIntoQuery(params)
 
         assert(params.text.join(''), `(id, name) VALUES ($1, $2), ($3, DEFAULT)`)
-        assert(params.counter, 4)
         assert(params.args, [123, "Bob", 124])
     })
 

@@ -6,7 +6,6 @@ describe("identifier clause test", () => {
     const createParams = () => ({
         text: [] as string[],
         args: [] as any[],
-        counter: 1
     })
 
     it("ident test", () => {
@@ -14,7 +13,6 @@ describe("identifier clause test", () => {
         
         sql.ident("identificator").mapIntoQuery(params)
 
-        assert(params.counter, 1)
         assert(params.args.length, 0)
         assert(params.text.join(''), '"identificator"')
     })

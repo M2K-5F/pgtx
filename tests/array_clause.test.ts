@@ -6,7 +6,6 @@ describe("array clause test", () => {
     const createParams = () => ({
         text: [] as string[],
         args: [] as any[],
-        counter: 1
     })
 
     it("test array of primitive", () => {
@@ -16,7 +15,6 @@ describe("array clause test", () => {
         sql.array(array).mapIntoQuery(params)
 
         assert(params.text.join(''), "$1, $2, $3, $4")
-        assert(params.counter, 5)
         assert(params.args, [10, "string", true, null])
     })
 
@@ -31,7 +29,6 @@ describe("array clause test", () => {
         sql.array(array).mapIntoQuery(params)
 
         assert(params.text.join(''), `static, "ident", sql fragment $1`)
-        assert(params.counter, 2)
         assert(params.args, ["value"])
     })
 
@@ -46,7 +43,6 @@ describe("array clause test", () => {
         sql.array(array, " AND ").mapIntoQuery(params)
 
         assert(params.text.join(''), "name = $1 AND age = $2 AND 1 = 1")
-        assert(params.counter, 3)
         assert(params.args, ["name", 18])
     })
 
