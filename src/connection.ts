@@ -30,6 +30,7 @@ export type ConnectionQueryContext = {
     rows: (string | null)[][]
     resolve: (value: any) => void
     reject: (err: Error) => void
+    text: string
     statementName: string | null
 }
 
@@ -83,6 +84,7 @@ export class Connection {
     private _queue = new ConnectionQueryQueue()
     private _statementDescriptions = new Map<string, ColumnDescription[]>()
     private _statements = new Map<string, string>()
+    private _parsePending = new Map<string, string>()
     private _stmtCounter = 0
     private _logLevel: LogLevel
 
@@ -170,23 +172,41 @@ export class Connection {
             if (query.args.length === 0) {
                 this._writer.writeQuery(query.text)
                 this._queue.push({
-                    resolve, reject, columns: [], rows: [], statementName: null
+                    resolve, reject, columns: [], rows: [], statementName: null, text: query.text
                 })
             } 
 
             else {
-                if (!this._statements.has(query.text)) {
-                    const newStatement = this._nextStatement()
-                    this._statements.set(query.text, newStatement)
+                let rejectParsed = reject
+                let statementName = ''
+
+                if (!this._statements.has(query.text) && !this._parsePending.has(query.text)) {
+                    statementName = this._nextStatement()
+
+                    this._parsePending.set(query.text, statementName)
+
+                    rejectParsed = (error: Error) => {
+                        this._parsePending.delete(query.text)
+                        reject(error)
+                    }
                     
-                    this._parseStatement(newStatement, query.text)
+                    this._writer
+                        .writeParse(statementName, query.text)
+                        console.log('parsed once', statementName, query.text);
+                        
                 }
 
-                const statementName = this._statements.get(query.text)!
+                statementName = this._statements.get(query.text) || this._parsePending.get(query.text)!
+
+                if (!this._statementDescriptions.has(statementName)) {
+                    this._writer.writeDescribe(statementName)
+                }
+
 
                 this._queue.push({
-                    resolve, reject, columns: [], rows: [], statementName: statementName
+                    resolve, reject: rejectParsed, columns: [], rows: [], statementName: statementName, text: query.text
                 })
+
                 this._writer
                     .writeBind("", statementName, query.args)
                     .writeExecute("")
@@ -237,13 +257,6 @@ export class Connection {
     }
 
 
-    private _parseStatement(statementName: string, text: string) {
-        this._writer
-            .writeParse(statementName, text)
-            .writeDescribe(statementName)
-    }
-
-
     private _registerFlush() {
         if (!this._isFlushing) {
             this._isFlushing = true
@@ -276,6 +289,8 @@ export class Connection {
         switch (type) {
             case ResponseTypes.ParseComplete: {
                 reader.readParseComplete()
+                this._statements.set(context.text, context.statementName!)
+                this._parsePending.delete(context.text)
             } break
 
             case ResponseTypes.BindComplete: {
