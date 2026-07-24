@@ -205,7 +205,7 @@ export class Pool {
      * const users = await pool.query<User>`SELECT * FROM users`
      * ```
      */
-    query<T extends Record<string, unknown>>(templates: TemplateStringsArray, ...args: any[]): Promise<T[]> {  
+    query<T extends Record<string, any>>(templates: TemplateStringsArray, ...args: any[]): Promise<T[]> {  
         this._checkClosed()
 
         while (!this._available.isFree) {

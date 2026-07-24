@@ -157,7 +157,7 @@ export class Connection {
      * const users = await conn.query<User>`SELECT * FROM users`
      * ```
      */
-    query<T extends Record<string, unknown>>(templates: TemplateStringsArray, ...args: any[]): Promise<T[]> {        
+    query<T extends Record<string, any>>(templates: TemplateStringsArray, ...args: any[]): Promise<T[]> {        
         if (!this._isAlive) throw ErrConnectionDead
 
         const query = compileSqlTemplate({templates, args})

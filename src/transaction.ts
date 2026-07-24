@@ -48,7 +48,7 @@ export class Transaction {
     /**
      * Executes a query within the current transaction.
      */
-    public async query<T extends Record<string, unknown>>(strings: TemplateStringsArray, ...values: any[]): Promise<T[]> {
+    public async query<T extends Record<string, any>>(strings: TemplateStringsArray, ...values: any[]): Promise<T[]> {
         this.checkActive()
         return await this.conn.query<T>(strings, ...values)
     }
