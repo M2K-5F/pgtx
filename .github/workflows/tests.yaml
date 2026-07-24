@@ -38,7 +38,7 @@ jobs:
         run: npm install
 
       - name: Run tests
-        run: npm test
+        run: npm run testGitHub
         env:
           PGHOST: localhost
           PGPORT: 5433

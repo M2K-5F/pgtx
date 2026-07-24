@@ -1,6 +1,5 @@
-import { QueryResultRow } from "pg"
+import { IdentifierClause } from "./clauses"
 import { Connection } from "./connection"
-import { IdentifierClause } from "./clauses/iden.caluse"
 
 /**
  * Represents an active SQL transaction.
@@ -49,7 +48,7 @@ export class Transaction {
     /**
      * Executes a query within the current transaction.
      */
-    public async query<T extends QueryResultRow = any>(strings: TemplateStringsArray, ...values: any[]): Promise<T[]> {
+    public async query<T extends Record<string, unknown>>(strings: TemplateStringsArray, ...values: any[]): Promise<T[]> {
         this.checkActive()
         return await this.conn.query<T>(strings, ...values)
     }

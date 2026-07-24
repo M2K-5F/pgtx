@@ -19,7 +19,7 @@ export class WhereClause<T extends Record<string, any>> extends Clause {
             if (index) params.text.push(' AND ')
             
             params.args.push(value)
-            params.text.push(`${key} = $${params.args.length}`)
+            params.text.push(`"${key}" = $${params.args.length}`)
         })
     }
 }

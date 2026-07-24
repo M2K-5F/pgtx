@@ -9,7 +9,8 @@
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
-    "test": "node --import tsx --test $(find tests -name '*.test.ts')"
+    "testGitHub": "node --import tsx --test $(find tests -name '*.test.ts')",
+    "test": "node --import tsx --test ./tests/*.test.ts"
   },
   "repository": {
     "type": "git",
@@ -36,9 +37,6 @@
       "require": "./dist/index.js",
       "types": "./dist/index.d.ts"
     }
-  },
-  "dependencies": {
-    "pg": "^8.11.0"
   },
   "devDependencies": {
     "@types/pg": "^8.11.0",

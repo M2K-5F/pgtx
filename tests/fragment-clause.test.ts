@@ -1,6 +1,5 @@
 import { describe, it } from "node:test"
 import {deepEqual as assert} from "node:assert"
-import { compileSqlTemplate } from "../src/utils"
 import { sql } from "../src"
 
 describe("fragment clause test", () => {

@@ -10,7 +10,7 @@ export type PreparedStatement<TResult extends any, Tparams extends any[]> = {
 
 export type CompiledSqlQuery = {
     text: string, 
-    args: any[],
+    args: (string | null)[],
 }
 
 export type ClauseStrategyParams = {
@@ -22,3 +22,12 @@ export type CompileSQLParams = {
     templates: TemplateStringsArray,
     args: any[],
 }
+
+
+export type ColumnDescription = {
+    name: string
+    typeOID: number
+}
+
+
+export type ValueOF<T extends Record<string, unknown>> = T[keyof T]

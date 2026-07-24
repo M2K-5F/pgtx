@@ -1,117 +1,286 @@
-import { Pool as PgPool, QueryResultRow} from "pg";
-import { PoolConfig, PreparedStatement } from "./types"
-import { Connection } from "./connection"
+import { Connection, ConnectionParams } from "./connection"
 import { Transaction } from "./transaction"
-import { PoolPreparedStatement } from "./prepared.statement";
+import { Queue } from "./queue";
+
+
+type PoolParams = ConnectionParams & {
+    max?: number
+}
+
+
+type Waiter = {
+    resolve: (conn: Connection) => void
+    reject: (err: Error) => void
+}
+
 
 /**
  * The main entry point for Pgtx. 
  * Manages a connection pool and provides high-level API for queries and transactions.
+ * 
+ * @example
+ * ```ts
+ * const pool = new Pool({
+ *   host: 'localhost',
+ *   user: 'postgres',
+ *   password: 'postgres',
+ *   database: 'test',
+ *   max: 10
+ * })
+ * 
+ * // Simple query
+ * const users = await pool.query`SELECT * FROM users WHERE id = ${1}`
+ * 
+ * // Transaction
+ * const result = await pool.begin(async tx => {
+ *   await tx.query`INSERT INTO users ...`
+ *   return 'success'
+ * })
+ * 
+ * // Manual acquire/release
+ * const conn = await pool.acquire()
+ * try {
+ *   await conn.query`SELECT 1`
+ * } finally {
+ *   pool.release(conn)
+ * }
+ * 
+ * // Clean up
+ * await pool.close()
+ * ```
  */
 export class Pool {
-    private pool: PgPool
-    private enableLogs: boolean
+    private _available = new Queue<Connection>()
+    private _config: ConnectionParams
+    private _max: number
+    private _total = 0
+    private _waiting = new Queue<Waiter>()
+    private _isClosed = false
 
-    constructor(
-        config: PoolConfig
-    ) {
-        this.enableLogs = config.enableLogs ?? false
-        this.pool = new PgPool(config)
+    private _checkClosed() {
+        if (this._isClosed) throw new Error('Pool closed')
     }
 
-    /**
-     * Executes a one-off query. 
-     * Automatically acquires and releases a connection from the pool.
-     * 
-     * @example
-     * const users = await pool.query<User>`SELECT * FROM users WHERE id = ${1}`;
-     */
-    public async query<T extends QueryResultRow>(strings: TemplateStringsArray, ...values: any[]) {
-        const conn = await this.acquire()
-
-        try {
-            return await conn.query<T>(strings, ...values)
-        }
-        catch (err) {
-            throw err
-        }
-        finally {
-            conn.release()
-        }
+    constructor(params: PoolParams) {
+        this._config = params
+        this._max = params.max || 20
     }
 
-    /**
-     * Creates a reusable prepared statement.
-     * When executed via `stmt.execute()`, it automatically manages its own connection.
-     * Maps '?' placeholders to native PostgreSQL '$1, $2' indexes.
-     * 
-     * @example
-     * const stmt = await pool.prepare<User, [string]>('get_user', 'SELECT * FROM users WHERE email = ?');
-     * const users = await stmt.execute('test@example.com');
-     */
-    public async prepare<TResult extends QueryResultRow, TParams extends any[] = []>(
-        name: string,
-        sqlTemplate: string
-    ): Promise<PreparedStatement<TResult, TParams>> {
-        
-        let index = 1
-        const text = sqlTemplate.replace(/\?/g, () => `$${index++}`)
-
-        return new PoolPreparedStatement(
-            this.pool,
-            text,
-            name
-        )
-    }
 
     /**
      * Acquires a dedicated connection from the pool.
-     * **Note:** You must call `connection.release()` manually when finished.
-     */
-    public async acquire(): Promise<Connection> {
-        const client = await this.pool.connect()
-        return new Connection(client, this.enableLogs)
-    }
-
-    /**
-     * Starts a managed transaction. 
-     * Automatically acquires a connection and handles BEGIN/COMMIT/ROLLBACK.
+     * 
+     * **Note:** You must call `pool.release(conn)` manually when finished.
+     * For most cases, prefer using `pool.query()` or `pool.begin()` which handle this automatically.
+     * 
+     * @returns A connection from the pool or a new one if available.
      * 
      * @example
-     * const result = await pool.begin(async (tx) => {
-     *   await tx.query`INSERT INTO accounts ...`;
-     *   return "success";
-     * });
+     * ```ts
+     * const conn = await pool.acquire()
+     * try {
+     *   await conn.query`SELECT 1`
+     * } finally {
+     *   pool.release(conn)
+     * }
+     * ```
      */
-    public async begin<T>(callback: (tx: Transaction) => Promise<T>): Promise<T> {
-        const conn = await this.acquire()
+    async acquire(): Promise<Connection> {
+        this._checkClosed()
 
-        try {
-            return await conn.begin(callback)
+        while (!this._available.isFree) {
+            const conn = this._available.get()
+            this._available.next()
+
+            if (conn.isAlive) {
+                return conn
+            }
+            this._total--
         }
-        catch (err) {
-            throw err
+
+        if (this._total < this._max) {
+            this._total++
+            try {
+                return await Connection.new(this._config)
+            } catch (err) {
+                this._total--
+                throw err
+            }
         }
-        finally {
-            conn.release()
-        }
+
+        return new Promise((resolve, reject) => {
+            this._waiting.push({ resolve, reject })
+        })
     }
+
 
     /**
-     * Returns current pool utilization statistics.
+     * Releases the connection back to the pool.
+     * 
+     * If there are pending `acquire()` calls, the connection is passed directly to the next waiter.
+     * Otherwise, it's added to the available connections queue.
+     * 
+     * @param conn - The connection to release.
+     * 
+     * @example
+     * ```ts
+     * const conn = await pool.acquire()
+     * try {
+     *   await conn.query`SELECT 1`
+     * } finally {
+     *   pool.release(conn)
+     * }
+     * ```
      */
-    public get stats() {
-        return {
-            total: this.pool.totalCount,
-            idle: this.pool.idleCount,
-            waiting: this.pool.waitingCount
+    release(conn: Connection) {
+        this._checkClosed()
+
+        if (!conn.isAlive) {
+            this._total--
+            return
+        }
+
+        if (!this._waiting.isFree) {
+            const waiter = this._waiting.get()
+            this._waiting.next()
+
+            waiter.resolve(conn)
+            return
+        }
+
+        this._available.push(conn)
+    }
+
+
+    /**
+     * Starts a managed transaction.
+     * 
+     * Automatically acquires a connection and handles `BEGIN`, `COMMIT`, and `ROLLBACK`.
+     * If the callback throws an error, the transaction is rolled back.
+     * 
+     * @param txCallback - Async function that receives a `Transaction` instance.
+     * @returns The value returned from the callback.
+     * 
+     * @example
+     * ```ts
+     * const result = await pool.begin(async tx => {
+     *   await tx.query`INSERT INTO accounts (id, balance) VALUES (1, 100)`
+     *   await tx.query`UPDATE accounts SET balance = balance - 10 WHERE id = 1`
+     *   return { success: true }
+     * })
+     * ```
+     */
+    async begin<T>(txCallback: (transaction: Transaction) => Promise<T>): Promise<T> {
+        this._checkClosed()
+
+        const conn = await this.acquire()
+        try {
+            return conn.begin(txCallback)
+        } finally {
+            this.release(conn)
         }
     }
 
+
+    /**
+     * Executes a one-off query using pipeline.
+     * 
+     * Automatically acquires and releases a connection from the pool.
+     * For optimal performance, multiple queries can be pipelined through the same connection.
+     * 
+     * @param templates - Tagged template string with SQL.
+     * @param args - Query parameters.
+     * @returns Array of rows with proper typing.
+     * 
+     * @example
+     * ```ts
+     * // Simple query
+     * const users = await pool.query`SELECT * FROM users`
+     * 
+     * // With parameters
+     * const user = await pool.query`SELECT * FROM users WHERE id = ${1}`
+     * 
+     * // With typed result
+     * type User = { id: number, name: string }
+     * const users = await pool.query<User>`SELECT * FROM users`
+     * ```
+     */
+    query<T extends Record<string, unknown>>(templates: TemplateStringsArray, ...args: any[]): Promise<T[]> {  
+        this._checkClosed()
+
+        while (!this._available.isFree) {
+            const conn = this._available.get()
+
+            if (conn.isAlive) {
+                return conn.query(templates, ...args)
+            }
+            this._available.next()
+            this._total--
+        }
+
+        if (this._total < this._max) {
+            this._total++
+            return Connection.new(this._config)
+                .catch(err => {
+                    this._total--
+                    throw err
+                })
+                .then(conn => {
+                    this.release(conn)
+                    return conn.query(templates, ...args)
+                })
+        }
+
+    
+        return this.acquire()
+            .then(conn => {
+                this.release(conn)
+                return conn.query(templates, ...args)
+            })
+    }
+
+
+    /**
+     * Number of available (idle) connections in the pool.
+     */
+    get size() {
+        return this._available.size
+    }
+
+
+    /**
+     * Total number of connections currently managed by the pool
+     * (available + in use).
+     */
+    get total() {
+        return this._total
+    }
+
+    
     /**
      * Shuts down the pool and closes all active connections.
+     * 
+     * All pending `acquire()` calls will be rejected with an error.
+     * The pool cannot be used after calling `close()`.
+     * 
+     * @example
+     * ```ts
+     * await pool.close()
+     * ```
      */
-    public close() {
-        return this.pool.end()
+    async close() {
+        while (!this._available.isFree) {
+            const conn = this._available.get()
+            this._available.next()
+            conn.close()
+        }
+
+        while (!this._waiting.isFree) {
+            const waiter = this._waiting.get()
+            this._waiting.next()
+            waiter.reject(new Error('Pool closed'))
+        }
+
+        this._total = 0
     }
 }

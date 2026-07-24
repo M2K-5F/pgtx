@@ -3,7 +3,7 @@ import { deepEqual as assert } from "node:assert"
 import { Pool, sql } from "../src"
 import { PoolConfig } from "../src/types";
 
-export const config: PoolConfig = {
+export const config = {
     host: process.env.PGHOST || 'localhost',
     user: process.env.PGUSER || 'postgres',
     password: process.env.PGPASSWORD || 'postgres',
@@ -81,7 +81,7 @@ describe("transaction isolation test", async () => {
             })
         })
 
-        await conn1.release(); await conn2.release()
+        pool.release(conn1); pool.release(conn2);
     })
 
     await it("savepoints isolation test", async () => {
@@ -106,4 +106,5 @@ describe("transaction isolation test", async () => {
         
         assert(rows, [{id: 1, status: 'success'}, {id: 2, status: "stable"}])
     })
+    process.exit()
 })

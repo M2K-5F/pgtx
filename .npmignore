@@ -4,3 +4,4 @@ tsconfig.json
 .github/
 jest.config.js
 vitest.config.ts
+performance-benchmark.ts
