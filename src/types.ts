@@ -1,7 +1,3 @@
-import { PoolConfig as PgPoolConfig } from "pg"
-
-export type PoolConfig = PgPoolConfig & {enableLogs?: boolean}
-
 export type PreparedStatement<TResult extends any, Tparams extends any[]> = {
     text: string, 
     name: string,
