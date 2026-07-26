@@ -1,5 +1,7 @@
 import { AuthenticationCode, ResponseType, TransactionStatus } from "./constants"
 import { ColumnDescription } from "../types"
+import { PostgresError } from "../error"
+
 
 export class ConnectionResponseBuffer {
     private caret = 0
@@ -131,19 +133,49 @@ export class ConnectionResponseReader {
     }
 
 
-    readErrorResponse() {
+    readErrorResponse(): PostgresError {
         this.buffer.readInt32()
+            
+        let severity = ''
+        let code = ''
         let message = ''
+        let detail = ''
+        let where = ''
+        let hint = ''
+        let position = ''
+        let dataType = ''
+        let constraint = ''
 
         while (true) {
             const marker = this.buffer.readChar()
             if (marker === '\0') break
 
             const text = this.buffer.readCString()
-            if (marker === 'M') message += text
+
+            switch (marker) {
+                case 'S': severity = text; break;
+                case 'C': code = text; break;
+                case 'M': message = text; break;
+                case 'D': detail = text; break;
+                case 'W': where = text; break;
+                case 'H': hint = text; break;        
+                case 'P': position = text; break;    
+                case 'd': dataType = text; break;    
+                case 'n': constraint = text; break;  
+            }
         }
 
-        return message
+        return new PostgresError(
+            message, 
+            code, 
+            detail, 
+            severity, 
+            where, 
+            hint, 
+            position, 
+            dataType, 
+            constraint
+        )
     }
 
 

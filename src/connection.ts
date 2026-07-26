@@ -6,10 +6,12 @@ import { ResponseType, ResponseTypes, TransactionStatuses } from "./protocol/con
 import { ConnectionResponseReader } from "./protocol/connection-response-reader"
 import { parseRowValues } from "./utils/value-parser"
 import { compileSqlTemplate } from "./utils/template-compiler"
-import { ColumnDescription } from "./types"
+import { Branded, ColumnDescription } from "./types"
 import { Transaction } from "./transaction"
 import { SocketConnector } from "./protocol/socket-connector"
 import { Queue } from "./queue"
+import { Query, QueryState } from "./query"
+import { QuicSession } from "node:quic"
 
 type LogLevel = "none" | "error" | "notice" | "query"
 
@@ -25,25 +27,34 @@ export type ConnectionParams = {
 const ErrConnectionDead = new Error("Connection is Dead")
 
 
-export type ConnectionQueryContext = {
-    columns: ColumnDescription[]
+export type ExecuteQueueUnit = {
     rows: (string | null)[][]
     resolve: (value: any) => void
     reject: (err: Error) => void
-    text: string
-    statementName: string | null
+    statementName: StatementName
 }
 
 
-export class ConnectionQueryQueue extends Queue<ConnectionQueryContext> {
-
-    rejectAllNext(error: Error) {
-        while (!this.isFree) {
-            this.get().reject(error)
-            this.next()
-        }
-    }
+export type ParsingQueueUnit = {
+    resolve: (statementName: StatementName) => void
+    reject: (error: Error) => void
+    text: QueryText
+    statementName: StatementName
 }
+
+
+export type DescribeQueueUnit = {
+    resolve: (value: ColumnDescription[]) => void
+    reject: (error: Error) => void
+    statementName: StatementName
+}
+
+
+type Pipeline = Queue<Query<any>>
+
+export type StatementName = Branded<string, 'statementName'>
+
+export type QueryText = Branded<string, 'queryText'>
 
 
 /**
@@ -81,16 +92,20 @@ export class Connection {
     private _isAlive = true
     private _socket: SocketConnector
     private _writer: ConnectionRequestWriter
-    private _queue = new ConnectionQueryQueue()
-    private _statementDescriptions = new Map<string, ColumnDescription[]>()
-    private _statements = new Map<string, string>()
-    private _parsePending = new Map<string, string>()
+
+    private _pipelinesQueue = new Queue<Pipeline>()
+
+    private _described = new Map<StatementName, ColumnDescription[]>()
+    private _describingPending = new Set<StatementName>()
+    private _parsed = new Map<QueryText, StatementName>()
+    private _parsingPending = new Map<QueryText, StatementName>()
+
     private _stmtCounter = 0
     private _logLevel: LogLevel
 
 
     private _nextStatement() {
-        return `s-${this._stmtCounter++}`
+        return `s-${this._stmtCounter++}` as StatementName
     }
 
     private constructor(
@@ -101,7 +116,9 @@ export class Connection {
         this._logLevel = logLevel
         this._socket = new SocketConnector(socket, 
             (type, reader) => this._handlePacket(type, reader),
-            error => this._handleError(error)
+            (err) => {
+                this._destroyConnection()
+            }
         )
         this._writer = writer
     }
@@ -112,7 +129,7 @@ export class Connection {
      * 
      * @param params - Connection parameters
      * @returns A new Connection instance
-     * @throws {Error} If authentication fails or connection cannot be established
+     * @throws {PostgresError} If authentication fails or connection cannot be established
      * 
      * @example
      * ```ts
@@ -157,61 +174,100 @@ export class Connection {
      * const users = await conn.query<User>`SELECT * FROM users`
      * ```
      */
-    query<T extends Record<string, any>>(templates: TemplateStringsArray, ...args: any[]): Promise<T[]> {        
+    query<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]): Promise<T[]> {
+        this._registerFlush()
         if (!this._isAlive) throw ErrConnectionDead
 
-        const query = compileSqlTemplate({templates, args})
+        const {text, args} = compileSqlTemplate({templates, args: params}) as {text: QueryText, args: (string | null)[]}
         
         if (this._logLevel === 'query') {
-            console.log(`\nQUERY:     ${query.text}\n${query.args.length !== 0 ? `ARGUMENTS: [${query.args}]\n` : ""}`)
+            console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
         }
 
-        return new Promise<T[]>((resolve, reject) => {
-            this._registerFlush()
+        const query = this._createQuery<T>(text, args)
 
-            if (query.args.length === 0) {
-                this._writer.writeQuery(query.text)
-                this._queue.push({
-                    resolve, reject, columns: [], rows: [], statementName: null, text: query.text
-                })
-            } 
+        this._writeQuery(query)
 
-            else {
-                let rejectParsed = reject
-                let statementName = ''
-
-                if (!this._statements.has(query.text) && !this._parsePending.has(query.text)) {
-                    statementName = this._nextStatement()
-
-                    this._parsePending.set(query.text, statementName)
-
-                    rejectParsed = (error: Error) => {
-                        this._parsePending.delete(query.text)
-                        reject(error)
-                    }
-                    
-                    this._writer
-                        .writeParse(statementName, query.text)
-                        console.log('parsed once', statementName, query.text);
-                        
-                }
-
-                statementName = this._statements.get(query.text) || this._parsePending.get(query.text)!
-
-                if (!this._statementDescriptions.has(statementName)) {
-                    this._writer.writeDescribe(statementName)
-                }
+        return query.promise
+    }
 
 
-                this._queue.push({
-                    resolve, reject: rejectParsed, columns: [], rows: [], statementName: statementName, text: query.text
-                })
+    private _createQuery<T>(text: QueryText, args: (string | null)[]): Query<T> {
+        if (this._parsed.has(text)) {
+            const statementName = this._parsed.get(text)!
 
-                this._writer
-                    .writeBind("", statementName, query.args)
-                    .writeExecute("")
+            if (this._described.has(statementName)) {
+                const columns = this._described.get(statementName)
+                return new Query(
+                    text, args, 
+                    QueryState.Executing, 
+                    statementName, 
+                    columns
+                )
             }
-        })
+            else {
+                if (this._describingPending.has(statementName)) {
+                    return new Query(
+                        text, args, 
+                        QueryState.Executing,
+                        statementName
+                    )
+                }
+                else {
+                    this._describingPending.add(statementName)
+
+                    return new Query(
+                        text, args,
+                        QueryState.Describing,
+                        statementName
+                    )
+                }
+            }
+        }
+
+        else {
+            if (this._parsingPending.has(text)) {
+                const statementName = this._parsingPending.get(text)!
+                return new Query(
+                    text, args,
+                    QueryState.Describing,
+                    statementName
+                )
+            }
+            else {
+                const statementName = this._nextStatement()
+                this._parsingPending.set(text, statementName)
+                return new Query(
+                    text, args,
+                    QueryState.Parsing,
+                    statementName
+                )
+            }
+        }
+    }
+
+
+    private _writeQuery(query: Query<any>) {
+        if (query.state === QueryState.Parsing) {
+            this._writer
+                .writeParse(query.statementName, query.text)
+                .writeDescribe(query.statementName)
+                .writeBind("", query.statementName, query.args)
+                .writeExecute("")
+        }
+        if (query.state === QueryState.Describing) {
+            this._writer
+                .writeDescribe(query.statementName)
+                .writeBind("", query.statementName, query.args)
+                .writeExecute("")
+        }
+        if (query.state === QueryState.Executing) {
+            this._writer
+                .writeBind("", query.statementName, query.args)
+                .writeExecute("")
+        }
+
+        this._pipelinesQueue.get().push(query)
     }
 
 
@@ -260,14 +316,18 @@ export class Connection {
     private _registerFlush() {
         if (!this._isFlushing) {
             this._isFlushing = true
-            nextTick(() => this._flush())
+            this._pipelinesQueue.push(new Queue<Query<any>>())
+            nextTick(() => {
+                this._flush()                
+            })
         }
     }
 
 
     private _flush() {      
+        this._isFlushing = false
         if (!this._isAlive) {
-            this._queue.rejectAllNext(ErrConnectionDead)
+            this._rejectPipeline(ErrConnectionDead)
             return
         }
         try {
@@ -275,84 +335,146 @@ export class Connection {
             this._writer.clear()
         }
         catch (err) {
-            this._isAlive = false
-            
-            this._socket.destroy()
-            this._queue.rejectAllNext(ErrConnectionDead)
+            this._destroyConnection()
+        }
+    }
+
+
+    private _getCurrentQuery() {
+        return this._pipelinesQueue.get().get()
+    }
+
+
+    private _rejectPipeline(error: Error) {
+        if (this._pipelinesQueue.isFree) return 
+
+        const queue = this._pipelinesQueue.get()
+
+        while (queue.hasMore) {
+            queue.get().reject(error)
+            queue.next()
         }
     }
 
 
     private _handlePacket(type: ResponseType, reader: ConnectionResponseReader) {
-        const context = this._queue.get()        
-        
         switch (type) {
             case ResponseTypes.ParseComplete: {
                 reader.readParseComplete()
-                this._statements.set(context.text, context.statementName!)
-                this._parsePending.delete(context.text)
+                const query = this._getCurrentQuery()
+
+                this._parsingPending.delete(query.text)
+                this._parsed.set(query.text, query.statementName)
+                query.state = QueryState.Describing
+
             } break
+
 
             case ResponseTypes.BindComplete: {
                 reader.readBindComplete()
             } break
 
+
             case ResponseTypes.CloseComplete: {
                 reader.readBindComplete()
             } break
+
 
             case ResponseTypes.ParameterDescription: {
                 reader.readParameterDescription()
             } break
 
+
             case ResponseTypes.NoData: {
                 reader.readNoData()
-                if (context.statementName) {
-                    this._statementDescriptions.set(context.statementName, [])
-                }
+
+                const query = this._getCurrentQuery()
+                this._describingPending.delete(query.statementName)
+                this._described.set(query.statementName, [])
+                query.state = QueryState.Executing
             } break
+
 
             case ResponseTypes.RowDescription: {
-                if (context.statementName) {
-                    this._statementDescriptions.set(context.statementName, reader.readRowDescription())
-                }
-                else {
-                    context.columns = reader.readRowDescription()
-                }
+                const columns = reader.readRowDescription()
+
+                const query = this._getCurrentQuery()
+                this._describingPending.delete(query.statementName)
+                this._described.set(query.statementName, columns)
+                query.state = QueryState.Executing
+                query.columns = columns
             } break
 
+
             case ResponseTypes.DataRow: {
-                context.rows.push(reader.readDataRow())
+                const query = this._getCurrentQuery()
+
+                query.rows.push(reader.readDataRow())
             } break
+
 
             case ResponseTypes.ComandComplete: {
                 reader.readCommandComplete()
 
-                if (context.statementName) {
-                    context.columns = this._statementDescriptions.get(context.statementName)!
+                if (this._pipelinesQueue.isFree) {
+                    this._destroyConnection()
+                    break
                 }
 
-                context.resolve(
-                    parseRowValues(context.columns, context.rows)
-                )
+                const query = this._getCurrentQuery()
+                
+                if (!query) {
+                    this._destroyConnection()
+                    break
+                }
 
-                this._queue.next()
+                if (!query.columns) {
+                    query.columns = this._described.get(query.statementName)!
+                }
+
+                query.state = QueryState.Completed
+                
+                this._pipelinesQueue.get().next()                
+
+                query.resolve(
+                    parseRowValues(query.columns, query.rows)
+                )
             } break
+
 
             case ResponseTypes.ErrorResponse: {
-                const message = reader.readErrorResponse()
+                const error = reader.readErrorResponse()
 
                 if (this._logLevel === 'error' || this._logLevel === 'notice' || this._logLevel === 'query') {
-                    console.log(`\nError:    ${message}\n`)
+                    console.log(`\nError:    ${error}\n`)
                 }
-                const error = new Error(message)
-                this._queue.rejectAllNext(error)
+                const query = this._getCurrentQuery()
+
+                switch (query.state) {
+                    case QueryState.Parsing:
+                        this._parsingPending.delete(query.text)
+                        break
+
+                    case QueryState.Describing:
+                        this._describingPending.delete(query.statementName)
+                        break
+                }
+
+                query.state = QueryState.Failed
+
+                this._rejectPipeline(error)
             } break
 
+
             case ResponseTypes.ReadyForQuery: {
-                this._isFlushing = false
                 reader.readReadyForQuery()
+                const pipeline = this._pipelinesQueue.get()
+
+                if (!pipeline.hasMore) {
+                    this._pipelinesQueue.next()
+                }
             } break
+
 
             case ResponseTypes.Notice: {
                 const message = reader.readErrorResponse()
@@ -362,16 +484,9 @@ export class Connection {
                 }
             } break
 
+
             default: console.warn('Undeclared response type: ', type);
         }
-    }
-
-
-    private _handleError(error: Error) {
-        this._isAlive = false 
-        
-        this._queue.rejectAllNext(error)
-        this._socket.destroy()
     }
 
 
@@ -381,6 +496,14 @@ export class Connection {
      */
     get isAlive() {
         return this._isAlive && !this._socket.isDestroyed
+    }
+
+
+
+    private _destroyConnection() {
+        this._isAlive = false
+        this._socket.destroy()
+        this._rejectPipeline(ErrConnectionDead)
     }
 
 
@@ -395,7 +518,6 @@ export class Connection {
      * ```
      */
     close() {
-        this._isAlive = false
-        this._socket.destroy()
+        this._destroyConnection()
     }
 }

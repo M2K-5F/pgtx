@@ -85,7 +85,7 @@ const Parsers: Record<number, (value: string) => unknown> = {
 const defaultParser = (v: string) => v
 
 
-export function parseRowValues(columns: ColumnDescription[], rows: (string | null)[][]): Record<string, any> {
+export function parseRowValues(columns: ColumnDescription[], rows: (string | null)[][]): Record<string, any>[] {
     const result: Record<string, any>[] = []
     const columnsLength = columns.length
 

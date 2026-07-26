@@ -1,7 +1,6 @@
 import { describe, it } from "node:test"
 import { deepEqual as assert } from "node:assert"
 import { Pool, sql } from "../src"
-import { PoolConfig } from "../src/types";
 
 export const config = {
     host: process.env.PGHOST || 'localhost',

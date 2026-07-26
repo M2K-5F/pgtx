@@ -1,5 +1,6 @@
 import { Pool as PgPool } from "pg";
-import { sql, Pool as PgtxPool } from "./src";
+import { sql, Pool as PgtxPool, Pool } from "./src";
+import assert from "assert";
 
 export const config = {
     host: process.env.PGHOST || 'localhost',
@@ -7,7 +8,7 @@ export const config = {
     password: process.env.PGPASSWORD || 'postgres',
     database: process.env.PGDATABASE || 'pgtx_test',
     port: Number(process.env.PGPORT) || 5433,
-    max: Number(process.env.PGMAX) || 20 
+    max: Number(process.env.PGMAX) || 10
 };
 
 const pgtxPool = new PgtxPool({...config})
@@ -15,7 +16,7 @@ const pgPool = new PgPool(config)
 
 const tablename = "benchmark_concurrent"
 const TOTAL_REQUESTS = 2000
-const CONCURRENCY = 150
+const CONCURRENCY = 200
 
 const usersToInsert = [
     { email: 'test1@test.com', name: 'User 1', age: 25 },
@@ -47,24 +48,34 @@ const setup = async () => {
 
 const runPgtxBench = async () => {
     const start = Date.now()
+    let counter = 0
     
     const workers = Array.from({ length: CONCURRENCY }, (_, i) => {
         const queriesPerWorker = Math.ceil(TOTAL_REQUESTS / CONCURRENCY)
         return async () => {
             for (let j = 0; j < queriesPerWorker; j++) {
-                await pgtxPool.query`
+                const res = await pgtxPool.query`
                     INSERT INTO ${sql.ident(tablename)} ${sql.insert(...usersToInsert)}
                     ON CONFLICT (email) 
                     DO UPDATE SET ${sql.update(updateData)}
                     WHERE ${sql.ident(tablename)}.status != ${'blocked'}
                     AND ${sql.ident(tablename)}.age > ${20}
+                    returning *
                 `
+                counter++
+                
+                assert.strictEqual(res.length, 2, 'Unvalid query result')
             }
+            
         }
     })
-
-    await Promise.all(workers.map(w => w()))
     
+    await Promise.all(workers.map(w => w()))
+
+    
+    assert.strictEqual(counter, 2000, "counter mismatch")
+
+
     return Date.now() - start
 }
 
@@ -111,10 +122,9 @@ async function run() {
         
         console.log(`\nRunning: ${TOTAL_REQUESTS} requests, ${CONCURRENCY} concurrent workers\n`)
 
-        const [pgtxTime, nativeTime] = await Promise.all([
-            runPgtxBench(),
-            runNativeBench()
-        ])
+        const pgtxTime = await runPgtxBench()
+        const nativeTime = await runNativeBench()
+
 
         const formatResult = (time: number) => ({
             time: `${time}ms`,
@@ -136,7 +146,7 @@ async function run() {
         console.error(err)
     } finally {
         await pgPool.end()
-        await pgtxPool.close()
+        // await pgtxPool.close()
     }
 }
 

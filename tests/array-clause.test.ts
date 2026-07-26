@@ -43,7 +43,7 @@ describe("array clause test", () => {
         sql.array(array, " AND ").mapIntoQuery(params)
 
         assert(params.text.join(''), "name = $1 AND age = $2 AND 1 = 1")
-        assert(params.args, ["name", 18])
+        assert(params.args, ["name", "18"])
     })
 
     it("undefined argument test", () => {

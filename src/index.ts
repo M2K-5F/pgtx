@@ -145,3 +145,5 @@ export { Transaction as Transaction }
 export { PgtxPool as Pool }
 
 export { setTypeParser as setTypeParser }
+
+export * from "./clauses"

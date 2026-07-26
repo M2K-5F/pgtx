@@ -25,10 +25,12 @@ npm install @m2k-5f/pgtx
 
 | Tool | RPS | Avg Time | Connections |
 |------|-----|----------|-------------|
-| **Pgtx** | **1584** | **0.631ms** | **20 (used only one)** |
-| Native `pg` | 179 | 5.585ms | 20 |
+| **Pgtx** | **1584** | **0.631ms** | **20 pool connections (pipeline multiplexing)** |
+| Native `pg` | 179 | 5.585ms | 20 pool connections |
 
-**9x faster**
+**Up to 9x faster in concurrent pipeline workloads**
+
+**Pgtx achieves higher throughput by multiplexing concurrent queries over PostgreSQL connections using pipeline execution.**
 
 
 > Benchmark source available in the [repository](https://github.com/M2K-5F/pgtx).
@@ -43,7 +45,7 @@ npm install @m2k-5f/pgtx
 - **Bulk inserts** — Auto-extract columns from objects
 - **Dynamic updates** — Generate SET clauses from objects
 - **Recursive fragments** — Compose SQL like Lego
-- **Prepared statements** — Pre-parse any SQL with parameters
+- **Prepared statements** — Automatic prepared statement caching
 - **Connection pool** — Auto-management connections with support for pipeline queries via the pool itself.
 - **Zero dependencies** — Lightweight and blazing
 

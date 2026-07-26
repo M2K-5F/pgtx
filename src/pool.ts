@@ -1,6 +1,7 @@
 import { Connection, ConnectionParams } from "./connection"
 import { Transaction } from "./transaction"
 import { Queue } from "./queue";
+import { log } from "console";
 
 
 type PoolParams = ConnectionParams & {
@@ -13,6 +14,7 @@ type Waiter = {
     reject: (err: Error) => void
 }
 
+let prev
 
 /**
  * The main entry point for Pgtx. 
@@ -85,10 +87,10 @@ export class Pool {
      * }
      * ```
      */
-    async acquire(): Promise<Connection> {
+    async acquire(): Promise<Connection> {       
         this._checkClosed()
 
-        while (!this._available.isFree) {
+        while (this._available.hasMore) {
             const conn = this._available.get()
             this._available.next()
 
@@ -140,7 +142,7 @@ export class Pool {
             return
         }
 
-        if (!this._waiting.isFree) {
+        if (this._waiting.hasMore) {
             const waiter = this._waiting.get()
             this._waiting.next()
 
@@ -208,16 +210,17 @@ export class Pool {
     query<T extends Record<string, any>>(templates: TemplateStringsArray, ...args: any[]): Promise<T[]> {  
         this._checkClosed()
 
-        while (!this._available.isFree) {
+        while (this._available.hasMore) {
+            
             const conn = this._available.get()
-
             if (conn.isAlive) {
                 return conn.query(templates, ...args)
             }
+            
             this._available.next()
             this._total--
         }
-
+        
         if (this._total < this._max) {
             this._total++
             return Connection.new(this._config)
@@ -231,11 +234,10 @@ export class Pool {
                 })
         }
 
-    
         return this.acquire()
             .then(conn => {
-                this.release(conn)
-                return conn.query(templates, ...args)
+                this.release(conn) 
+                return conn.query<T>(templates, ...args)
             })
     }
 
@@ -269,13 +271,13 @@ export class Pool {
      * ```
      */
     async close() {
-        while (!this._available.isFree) {
+        while (this._available.hasMore) {
             const conn = this._available.get()
             this._available.next()
             conn.close()
         }
 
-        while (!this._waiting.isFree) {
+        while (this._waiting.hasMore) {
             const waiter = this._waiting.get()
             this._waiting.next()
             waiter.reject(new Error('Pool closed'))

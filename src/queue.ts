@@ -4,7 +4,8 @@ export class Queue<T> {
     
     next() {
         this._pointer++
-        if (this._pointer === this._queue.length) {
+        if (this._pointer >= this._queue.length) {
+            
             this._queue = []
             this._pointer = 0
         }
@@ -14,6 +15,19 @@ export class Queue<T> {
         return this._queue[this._pointer]
     }
 
+
+    shift() {
+        const item = this._queue[this._pointer]
+        this._pointer++
+        if (this._pointer >= this._queue.length) {
+            
+            this._queue = []
+            this._pointer = 0
+        }
+        return item
+    }
+
+
     push(item: T) {
         this._queue.push(item)
     }
@@ -22,5 +36,11 @@ export class Queue<T> {
         return this._queue.length - this._pointer
     }
 
-    get isFree() {return this._pointer === this._queue.length}
+
+    get hasMore() {
+        return this._pointer < this._queue.length
+    }
+
+
+    get isFree() {return this._pointer >= this._queue.length}
 }
