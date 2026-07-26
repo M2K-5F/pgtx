@@ -42,17 +42,17 @@ describe("Performance test", async () => {
         )`
     await pool.query`CREATE INDEX IF NOT EXISTS idx_users_status_age ON ${sql.ident(tablename)} (status, age)`
 
-    before(async () => {
+    await before(async () => {
         console.log('Warming')
         
         await runPgtxBench(pool)
     })
 
-    after(async () => {
+    await after(async () => {        
         await pool.close()
     })
 
-    it("Throughput test", async () => {
+    await it("Throughput test", async () => {
         console.log(`\nRunning: ${TOTAL_REQUESTS} requests, ${CONCURRENCY} concurrent workers\n`)
 
         await runPgtxBench(pool)
