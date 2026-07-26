@@ -14,8 +14,6 @@ type Waiter = {
     reject: (err: Error) => void
 }
 
-let prev
-
 /**
  * The main entry point for Pgtx. 
  * Manages a connection pool and provides high-level API for queries and transactions.

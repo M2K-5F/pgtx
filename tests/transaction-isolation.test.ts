@@ -1,54 +1,53 @@
-import { describe, it } from "node:test"
-import { deepEqual as assert } from "node:assert"
+import { after, before, describe, it } from "node:test"
 import { Pool, sql } from "../src"
-
-export const config = {
-    host: process.env.PGHOST || 'localhost',
-    user: process.env.PGUSER || 'postgres',
-    password: process.env.PGPASSWORD || 'postgres',
-    database: process.env.PGDATABASE || 'pgtx_test',
-    port: Number(process.env.PGPORT) || 5433,
-    max: Number(process.env.PGMAX) || 20 
-};
-
-const pool = new Pool(config)
+import assert from "assert"
 
 const tablename = "transaction_isolation_test"
 
 type Table = {id: number, status: string}
 
-const setup = async () => {
-    await pool.query`
-    create table if not exists ${sql.literal(tablename)} (
-        id bigserial primary key,
-        status text not null
-    );`
-}
 
-const drop = async () => {
-    await pool.query`drop table ${sql.literal(tablename)};`
-    await pool.query`
-    create table if not exists ${sql.literal(tablename)} (
-        id bigserial primary key,
-        status text not null
-    );`
-}
+describe("Transaction isolation test", async () => {
+    const pool = new Pool({
+        host: process.env.PGHOST || 'localhost',
+        user: process.env.PGUSER || 'postgres',
+        password: process.env.PGPASSWORD || 'postgres',
+        database: process.env.PGDATABASE || 'pgtx_test',
+        port: Number(process.env.PGPORT) || 5433,
+        max: Number(process.env.PGMAX) || 10
+    })
 
-describe("transaction isolation test", async () => {
-    await setup()
-    await drop()
+    before(async () => {
+        await pool.query`
+            create table if not exists ${sql.literal(tablename)} (
+                id bigserial primary key,
+                status text not null
+            );`
+        await pool.query`
+            truncate table ${sql.literal(tablename)}
+            `
+    })
 
-    await it("transaction test", async () => {
+    after(async () => {
+        await pool.close()
+    })
+
+    
+    it("transaction test", async () => {
         await pool.begin(async tx => {
-            await tx.query`insert into ${sql.ident(tablename)} ${sql.insert<Table>({id: 1, status: 'success'}, {id: 2, status: "stable"})}`
+            await tx.query`
+            insert into ${sql.ident(tablename)} 
+            ${sql.insert<Table>({id: 1, status: 'success'}, {id: 2, status: "stable"})}`
         })
 
         const rows = await pool.query<Table>`SELECT * from ${sql.ident(tablename)}`
-        assert(rows, [{id: 1, status: 'success'}, {id: 2, status: "stable"}])
+        assert.deepStrictEqual(rows, [{id: 1, status: 'success'}, {id: 2, status: "stable"}])
     })
 
-    await it("isolation test", async () => {
-        await drop()
+
+    it("isolation test", async () => {
+        await pool.query`
+        truncate table ${sql.ident(tablename)}`
 
         await pool.begin(async tx => {
             await tx.query`insert into ${sql.ident(tablename)} ${sql.insert<Table>({id: 1, status: 'success'}, {id: 2, status: "stable"})}`
@@ -56,11 +55,13 @@ describe("transaction isolation test", async () => {
         })
 
         const rows = await pool.query<Table>`SELECT * from ${sql.ident(tablename)}`
-        assert(rows, [])
+        assert.deepStrictEqual(rows, [])
     })
 
-    await it("parrallel transaction isolation test", async () => {
-        await drop()
+
+    it("parrallel transaction isolation test", async () => {
+        await pool.query`
+        truncate table ${sql.ident(tablename)}`
 
         const conn1 = await pool.acquire()
         const conn2 = await pool.acquire()
@@ -70,13 +71,13 @@ describe("transaction isolation test", async () => {
 
             await conn2.begin(async tx2 => {
                 const [rowBeforeCommit] = await tx2.query`SELECT count(*) from ${sql.ident(tablename)}`
-                assert(rowBeforeCommit.count, 0)
+                assert.deepStrictEqual(rowBeforeCommit.count, 0)
 
                 await tx1.commit()
                 
                 const [rowAfterCommit] = await tx2.query`SELECT count(*) from ${sql.ident(tablename)}`
                 
-                assert(rowAfterCommit.count, 2)
+                assert.deepStrictEqual(rowAfterCommit.count, 2)
             })
         })
 
@@ -84,7 +85,8 @@ describe("transaction isolation test", async () => {
     })
 
     await it("savepoints isolation test", async () => {
-        await drop()
+        await pool.query`
+        truncate table ${sql.ident(tablename)}`
 
         await pool.begin(async tx => {
             await tx.query`insert into ${sql.ident(tablename)} ${sql.insert<Table>({id: 1, status: 'success'})}`
@@ -103,7 +105,6 @@ describe("transaction isolation test", async () => {
 
         const rows = await pool.query<Table>`SELECT * from ${sql.ident(tablename)}`
         
-        assert(rows, [{id: 1, status: 'success'}, {id: 2, status: "stable"}])
+        assert.deepStrictEqual(rows, [{id: 1, status: 'success'}, {id: 2, status: "stable"}])
     })
-    process.exit()
 })

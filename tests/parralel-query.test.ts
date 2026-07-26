@@ -13,13 +13,19 @@ describe("Connection Pipeline Race Condition", async () => {
     })
     
 
-    await pool.begin(async (t) => {
-        await t.query`CREATE TABLE IF NOT EXISTS test_courses (id UUID PRIMARY KEY, title TEXT);`
-        await t.query`CREATE TABLE IF NOT EXISTS test_topics (id UUID PRIMARY KEY, name TEXT);`
-        
-        await t.query`TRUNCATE test_courses, test_topics;`;
-        await t.query`INSERT INTO test_courses (id, title) VALUES ('00000000-0000-0000-0000-000000000001', 'some course title');`
-        await t.query`INSERT INTO test_topics (id, name) VALUES ('00000000-0000-0000-0000-000000000002', 'some topic title');`
+    before(async () => {
+        await pool.begin(async (t) => {
+            await t.query`CREATE TABLE IF NOT EXISTS test_courses (id UUID PRIMARY KEY, title TEXT);`
+            await t.query`CREATE TABLE IF NOT EXISTS test_topics (id UUID PRIMARY KEY, name TEXT);`
+            
+            await t.query`TRUNCATE test_courses, test_topics;`;
+            await t.query`INSERT INTO test_courses (id, title) VALUES ('00000000-0000-0000-0000-000000000001', 'some course title');`
+            await t.query`INSERT INTO test_topics (id, name) VALUES ('00000000-0000-0000-0000-000000000002', 'some topic title');`
+        })
+    })
+
+    after(async () => {
+        await pool.close()
     })
 
 
@@ -71,6 +77,4 @@ describe("Connection Pipeline Race Condition", async () => {
             assert.fail(error.message)
         }
     })
-
-    await pool.close()
 })

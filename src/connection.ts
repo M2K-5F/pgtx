@@ -503,7 +503,10 @@ export class Connection {
     private _destroyConnection() {
         this._isAlive = false
         this._socket.destroy()
-        this._rejectPipeline(ErrConnectionDead)
+        while (this._pipelinesQueue.hasMore) {
+            this._rejectPipeline(ErrConnectionDead)
+            this._pipelinesQueue.next()
+        }
     }
 
 

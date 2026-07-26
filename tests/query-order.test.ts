@@ -12,8 +12,12 @@ describe('Query order test', async () => {
         max: Number(process.env.PGMAX) || 10
     })
 
+    after(async () => {
+        await pool.close()
+    })
 
-    await it("should not skip pipeline after ReadyForQuery", async () => {
+
+    it("should not skip pipeline after ReadyForQuery", async () => {
         const results = await Promise.all(
             Array.from({length: 100}, async (_, i) => {
                 
@@ -33,7 +37,8 @@ describe('Query order test', async () => {
         }
     })
 
-    await it("should switch pipelines only after ReadyForQuery", async () => {
+
+    it("should switch pipelines only after ReadyForQuery", async () => {
 
         const batch1 = Promise.all([
             pool.query`SELECT 1 as batch, pg_sleep(0.05)`,
@@ -63,7 +68,8 @@ describe('Query order test', async () => {
         assert.strictEqual(result[1][1][0].batch, 4)
     })
 
-    await it("should handle multiple flush batches correctly", async () => {
+
+    it("should handle multiple flush batches correctly", async () => {
         const batch1 = []
 
         for (let i = 0; i < 50; i++) {
@@ -99,7 +105,7 @@ describe('Query order test', async () => {
         }
     })
 
-    await it("should reject pending queries after pipeline error", async () => {
+    it("should reject pending queries after pipeline error", async () => {
         const queries = [
             pool.query`
                 SELECT 1 as value
@@ -138,6 +144,4 @@ describe('Query order test', async () => {
             )
         }
     })
-
-    await pool.close()
 })
