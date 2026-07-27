@@ -113,6 +113,36 @@ await pool.begin(async (tx) => {
 })
 ```
 
+
+### Async Notifications (LISTEN / NOTIFY)
+
+Pgtx natively handles PostgreSQL `LISTEN/NOTIFY` protocol messages asynchronously without interrupting multiplexed query pipeline.
+
+```typescript
+// 1. Sending a notification
+await pool.notify('user_events', JSON.stringify({ id: 42, action: 'signup' }))
+
+// 2. Receiving notifications (Requires a dedicated connection from the pool)
+const conn = await pool.acquire()
+
+const onEvent = (payload: string) => {
+  console.log(`Received payload: ${payload}`)
+}
+
+// Multiplexes multiple callbacks onto a single LISTEN command seamlessly
+await conn.listen('user_events', onEvent)
+await conn.listen('user_events', (data) => logToFile(data))
+
+// Clean up callbacks (Sends UNLISTEN only when the channel has zero callbacks left)
+await conn.unlisten('user_events', onEvent)
+
+// Keep the connection active as long as you need notifications!
+// Do NOT release it back to the pool prematurely.
+```
+
+> ⚠️ **Architecture Note:** While `notify` is atomic and can be triggered directly from the `Pool` on any random socket, `listen` and `unlisten` are stateful commands tied to a specific PostgreSQL backend process. Therefore, subscription methods are **strictly available only on explicit `Connection` instances** fetched via `pool.acquire()`.
+
+
 ### Bulk Inserts
 
 ```typescript
@@ -252,6 +282,9 @@ class Connection {
 
     query<T>(strings: TemplateStringsArray, ...values: any[]): Promise<T[]>
     begin<T>(callback: (tx: Transaction) => Promise<T>): Promise<T>
+    notify(channelName: string, payload?: string): Promise<[]>
+    listen(channelName: string, callback: (payload: string) => void): Promise<[]>
+    unlisten(channelName: string, callback: (payload: string) => void): Promise<[]>
 
     get isAlive(): boolean
     close(): void
@@ -275,6 +308,7 @@ class Pool {
 
     query<T>(strings: TemplateStringsArray, ...values: any[]): Promise<T[]>
     begin<T>(callback: (tx: Transaction) => Promise<T>): Promise<T>
+    notify(channelName: string, payload?: string): Promise<[]>
     acquire(): Promise<Connection>
     release(conn: Connection): void
     close(): Promise<void>

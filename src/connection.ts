@@ -12,6 +12,8 @@ import { SocketConnector } from "./protocol/socket-connector"
 import { Queue } from "./queue"
 import { Query, QueryState } from "./query"
 import { QuicSession } from "node:quic"
+import { sql } from "."
+import { writer } from "repl"
 
 type LogLevel = "none" | "error" | "notice" | "query"
 
@@ -52,9 +54,11 @@ export type DescribeQueueUnit = {
 
 type Pipeline = Queue<Query<any>>
 
-export type StatementName = Branded<string, 'statementName'>
+export type StatementName = Branded<string, 'StatementName'>
 
-export type QueryText = Branded<string, 'queryText'>
+export type QueryText = Branded<string, 'QueryText'>
+
+export type ChannelName = Branded<string, "ChannelName">
 
 
 /**
@@ -88,8 +92,10 @@ export type QueryText = Branded<string, 'queryText'>
  * ```
  */
 export class Connection {
+    private readonly params: ConnectionParams
     private _isFlushing = false
-    private _isAlive = true
+    private _isOpened = true
+    private _isReconnecting = false
     private _socket: SocketConnector
     private _writer: ConnectionRequestWriter
 
@@ -100,6 +106,7 @@ export class Connection {
     private _parsed = new Map<QueryText, StatementName>()
     private _parsingPending = new Map<QueryText, StatementName>()
 
+    private _listeningCallbacks = new Map<ChannelName, Set<(payload: string) => void>>()
     private _stmtCounter = 0
     private _logLevel: LogLevel
 
@@ -111,13 +118,16 @@ export class Connection {
     private constructor(
         socket: Socket,
         writer: ConnectionRequestWriter,
-        logLevel: LogLevel
+        logLevel: LogLevel, 
+        params: ConnectionParams
     ) {
+        this.params = params
         this._logLevel = logLevel
         this._socket = new SocketConnector(socket, 
             (type, reader) => this._handlePacket(type, reader),
             (err) => {
-                this._destroyConnection()
+                this._isReconnecting = true
+                this._rejectPipeline(ErrConnectionDead)
             }
         )
         this._writer = writer
@@ -146,7 +156,7 @@ export class Connection {
         const writer = ConnectionRequestWriter.new()
         const socket = await createAuthorizedSocket(writer, params)
         
-        return new Connection(socket, writer, params.logLevel || 'error')
+        return new Connection(socket, writer, params.logLevel || 'error', params)
     }
 
 
@@ -176,7 +186,7 @@ export class Connection {
      */
     query<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]): Promise<T[]> {
         this._registerFlush()
-        if (!this._isAlive) throw ErrConnectionDead
+        if (!this._isOpened) throw ErrConnectionDead
 
         const {text, args} = compileSqlTemplate({templates, args: params}) as {text: QueryText, args: (string | null)[]}
         
@@ -192,6 +202,117 @@ export class Connection {
     }
 
 
+    /**
+     * Starts a managed transaction on this connection.
+     * 
+     * Automatically handles:
+     * - `BEGIN` before the callback
+     * - `COMMIT` on successful completion
+     * - `ROLLBACK` if an error is thrown
+     * 
+     * @param txCallback - Async function that receives a `Transaction` instance
+     * @returns The value returned from the callback
+     * @throws {Error} If connection is dead or transaction fails
+     * 
+     * @example
+     * ```ts
+     * const result = await conn.begin(async tx => {
+     *   await tx.query`INSERT INTO accounts (id, balance) VALUES (1, 100)`
+     *   await tx.query`UPDATE accounts SET balance = balance - 10 WHERE id = 1`
+     *   return { success: true }
+     * })
+     * ```
+     */
+    async begin<T>(txCallback: (transaction: Transaction) => Promise<T>): Promise<T> {
+        if (!this._isOpened) throw ErrConnectionDead
+
+        const tx = new Transaction(this)
+        
+        try {
+            await tx.query`BEGIN`
+
+            const result = await txCallback(tx)
+
+            if (tx.isActive) await tx.commit()
+
+            return result
+        } 
+        catch (err) {
+            if (tx.isActive) await tx.rollback()
+            throw err
+        }
+    }
+
+
+    /**
+     * Sends an asynchronous notification to a channel via `pg_notify`.
+     * 
+     * @param channelName - The channel identifier
+     * @param payload - Optional string data (max 8000 bytes)
+     * 
+     * @example
+     * ```ts
+     * await conn.notify('events', 'hello')
+     * ```
+     */
+    notify(channelName: string, payload: string = "") {
+        return this.query`select pg_notify(${channelName}, ${payload})` as Promise<[]>
+    }
+
+
+    /**
+     * Subscribes a callback to a channel. Sends `LISTEN` on the first subscription.
+     * 
+     * @param channelName - The channel identifier
+     * @param callback - Function invoked when a notification arrives
+     * 
+     * @example
+     * ```ts
+     * await conn.listen('events', data => console.log(data))
+     * ```
+     */
+    listen(channelName: string, callback: (payload: string) => void) {
+        if (!this._listeningCallbacks.has(channelName as ChannelName)) {
+            this._listeningCallbacks.set(channelName as ChannelName, new Set())
+        }
+
+        const callbackSet = this._listeningCallbacks.get(channelName as ChannelName)!
+
+        callbackSet.add(callback)
+
+        return this.query`listen ${sql.ident(channelName)};`
+    }
+
+
+    /**
+     * Unsubscribes a callback. Sends `UNLISTEN` if no callbacks remain for the channel.
+     * 
+     * @param channelName - The channel identifier
+     * @param callback - The registered callback to remove
+     * 
+     * @example
+     * ```ts
+     * await conn.unlisten('events', callback)
+     * ```
+     */
+    unlisten(channelName: string, callback: (payload: string) => void) {
+        if (!this._listeningCallbacks.has(channelName as ChannelName)) {
+            return Promise.resolve()
+        }
+
+        const callbackSet = this._listeningCallbacks.get(channelName as ChannelName)!
+
+        callbackSet.delete(callback)
+
+        if (callbackSet.size === 0) {
+            this._listeningCallbacks.delete(channelName as ChannelName)
+            return this.query`unlisten ${sql.ident(channelName)};`
+        }
+        
+        return Promise.resolve()
+    }
+    
+    
     private _createQuery<T>(text: QueryText, args: (string | null)[]): Query<T> {
         if (this._parsed.has(text)) {
             const statementName = this._parsed.get(text)!
@@ -271,48 +392,6 @@ export class Connection {
     }
 
 
-    /**
-     * Starts a managed transaction on this connection.
-     * 
-     * Automatically handles:
-     * - `BEGIN` before the callback
-     * - `COMMIT` on successful completion
-     * - `ROLLBACK` if an error is thrown
-     * 
-     * @param txCallback - Async function that receives a `Transaction` instance
-     * @returns The value returned from the callback
-     * @throws {Error} If connection is dead or transaction fails
-     * 
-     * @example
-     * ```ts
-     * const result = await conn.begin(async tx => {
-     *   await tx.query`INSERT INTO accounts (id, balance) VALUES (1, 100)`
-     *   await tx.query`UPDATE accounts SET balance = balance - 10 WHERE id = 1`
-     *   return { success: true }
-     * })
-     * ```
-     */
-    async begin<T>(txCallback: (transaction: Transaction) => Promise<T>): Promise<T> {
-        if (!this._isAlive) throw ErrConnectionDead
-
-        const tx = new Transaction(this)
-        
-        try {
-            await tx.query`BEGIN`
-
-            const result = await txCallback(tx)
-
-            if (tx.isActive) await tx.commit()
-
-            return result
-        } 
-        catch (err) {
-            if (tx.isActive) await tx.rollback()
-            throw err
-        }
-    }
-
-
     private _registerFlush() {
         if (!this._isFlushing) {
             this._isFlushing = true
@@ -325,18 +404,69 @@ export class Connection {
 
 
     private _flush() {      
-        this._isFlushing = false
-        if (!this._isAlive) {
+        if (!this._isOpened) {
             this._rejectPipeline(ErrConnectionDead)
             return
         }
-        try {
+
+        if (this._isReconnecting) {
+            this._reconnect().then(socket => {
+                
+                this._isFlushing = false
+                socket.write(this._writer.writeSync())
+                this._writer.clear()
+            })
+        }
+
+        else {
+            this._isFlushing = false
             this._socket.write(this._writer.writeSync())
             this._writer.clear()
         }
-        catch (err) {
-            this._destroyConnection()
+    }
+
+
+    private _reconnect(): Promise<SocketConnector> {
+        this._parsed.clear()
+        this._described.clear()
+        this._describingPending.clear()
+        this._parsingPending.clear()
+        this._writer.clear()
+
+        while (this._pipelinesQueue.hasMore) {
+            this._rejectPipeline(ErrConnectionDead)
+            this._pipelinesQueue.next()
         }
+
+        this._pipelinesQueue = new Queue()
+        this._pipelinesQueue.push(new Queue())
+
+        return createAuthorizedSocket(ConnectionRequestWriter.new(), this.params)
+            .then(socket => {
+                const connector = new SocketConnector(
+                    socket, 
+                    (type, reader) => this._handlePacket(type, reader),
+                    (err) => {
+                        this._isReconnecting = true
+                        this._rejectPipeline(ErrConnectionDead)
+                    })
+                this._socket = connector
+                this._restoreSubscriptions()
+                this._isReconnecting = false
+
+                return connector
+            })
+    }
+
+    
+    private _restoreSubscriptions() {
+        if (this._listeningCallbacks.size === 0) return Promise.resolve()
+
+        const promises = Array.from(this._listeningCallbacks.keys()).map(channel => {
+            return this.query`LISTEN ${sql.ident(channel)};`
+        })
+
+        return Promise.all(promises)
     }
 
 
@@ -485,6 +615,17 @@ export class Connection {
             } break
 
 
+            case ResponseTypes.NotificationResponse: {
+                const {name, payload} = reader.readNotificationResponse()
+
+                const callbackSet = this._listeningCallbacks.get(name)
+
+                if (!callbackSet) break
+
+                callbackSet.forEach(cb => cb(payload))
+            } break
+
+
             default: console.warn('Undeclared response type: ', type);
         }
     }
@@ -494,14 +635,14 @@ export class Connection {
      * Checks if the connection is still alive and usable.
      * Returns `false` if the socket is destroyed or connection is dead.
      */
-    get isAlive() {
-        return this._isAlive && !this._socket.isDestroyed
+    get isOpened() {
+        return this._isOpened
     }
 
 
 
     private _destroyConnection() {
-        this._isAlive = false
+        this._isOpened = false
         this._socket.destroy()
         while (this._pipelinesQueue.hasMore) {
             this._rejectPipeline(ErrConnectionDead)

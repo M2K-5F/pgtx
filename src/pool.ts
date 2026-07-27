@@ -92,7 +92,7 @@ export class Pool {
             const conn = this._available.get()
             this._available.next()
 
-            if (conn.isAlive) {
+            if (conn.isOpened) {
                 return conn
             }
             this._total--
@@ -135,7 +135,7 @@ export class Pool {
     release(conn: Connection) {
         this._checkClosed()
 
-        if (!conn.isAlive) {
+        if (!conn.isOpened) {
             this._total--
             return
         }
@@ -211,7 +211,7 @@ export class Pool {
         while (this._available.hasMore) {
             
             const conn = this._available.get()
-            if (conn.isAlive) {
+            if (conn.isOpened) {
                 return conn.query(templates, ...args)
             }
             
@@ -237,6 +237,22 @@ export class Pool {
                 this.release(conn) 
                 return conn.query<T>(templates, ...args)
             })
+    }
+
+
+    /**
+     * Sends an asynchronous notification to a channel via `pg_notify`.
+     * 
+     * @param channelName - The channel identifier
+     * @param payload - Optional string data (max 8000 bytes)
+     * 
+     * @example
+     * ```ts
+     * await pool.notify('events', 'hello')
+     * ```
+     */
+    notify(channelName: string, payload: string = "") {
+        return this.query`select pg_notify(${channelName}, ${payload})` as Promise<[]>
     }
 
 

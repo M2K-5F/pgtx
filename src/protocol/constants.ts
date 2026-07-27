@@ -29,7 +29,8 @@ export const ResponseTypes = {
     CloseComplete: "3",
     ParameterDescription: "t",
     NoData: "n",
-    Notice: "N"
+    Notice: "N",
+    NotificationResponse: "A"
 } as const
 
 

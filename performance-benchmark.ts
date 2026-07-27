@@ -16,7 +16,7 @@ const pgPool = new PgPool(config)
 
 const tablename = "benchmark_concurrent"
 const TOTAL_REQUESTS = 2000
-const CONCURRENCY = 200
+const CONCURRENCY = 500
 
 const usersToInsert = [
     { email: 'test1@test.com', name: 'User 1', age: 25 },

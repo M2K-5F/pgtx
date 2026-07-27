@@ -12,6 +12,7 @@ export class SocketConnector {
         private _onData: (type: ResponseType, reader: ConnectionResponseReader) => void,
         private _onError: (error: Error) => void
     ) {
+        _socket.setKeepAlive(true, 10000)
         _socket.on('data', buffer => {
             const currentBuffer = this.residualBuffer 
                 ? Buffer.concat([this.residualBuffer, buffer as Buffer]) 
