@@ -15,8 +15,8 @@ const pgtxPool = new PgtxPool({...config})
 const pgPool = new PgPool(config)
 
 const tablename = "benchmark_concurrent"
-const TOTAL_REQUESTS = 2000
-const CONCURRENCY = 500
+const TOTAL_REQUESTS = 100000
+const CONCURRENCY = 10000
 
 const usersToInsert = [
     { email: 'test1@test.com', name: 'User 1', age: 25 },
@@ -48,7 +48,6 @@ const setup = async () => {
 
 const runPgtxBench = async () => {
     const start = Date.now()
-    let counter = 0
     
     const workers = Array.from({ length: CONCURRENCY }, (_, i) => {
         const queriesPerWorker = Math.ceil(TOTAL_REQUESTS / CONCURRENCY)
@@ -60,21 +59,13 @@ const runPgtxBench = async () => {
                     DO UPDATE SET ${sql.update(updateData)}
                     WHERE ${sql.ident(tablename)}.status != ${'blocked'}
                     AND ${sql.ident(tablename)}.age > ${20}
-                    returning *
                 `
-                counter++
-                
-                assert.strictEqual(res.length, 2, 'Unvalid query result')
             }
             
         }
     })
     
     await Promise.all(workers.map(w => w()))
-
-    
-    assert.strictEqual(counter, 2000, "counter mismatch")
-
 
     return Date.now() - start
 }

@@ -4,8 +4,8 @@ import {describe, before, after, it} from "node:test"
 
 
 const tablename = "benchmark_concurrent"
-const TOTAL_REQUESTS = 2000
-const CONCURRENCY = 200
+const TOTAL_REQUESTS = 50000
+const CONCURRENCY = 10000
 
 const usersToInsert = [
     { email: 'test1@test.com', name: 'User 1', age: 25 },
@@ -18,35 +18,37 @@ const updateData = {
     attempts: 1 
 }
 
-describe("Performance test", async () => {
-    const pool = new Pool({
-        host: process.env.PGHOST || 'localhost',
-        user: process.env.PGUSER || 'postgres',
-        password: process.env.PGPASSWORD || 'postgres',
-        database: process.env.PGDATABASE || 'pgtx_test',
-        port: Number(process.env.PGPORT) || 5433,
-        max: Number(process.env.PGMAX) || 10
-    })
 
-    await pool.query`DROP TABLE IF EXISTS ${sql.ident(tablename)}`
-    await pool.query`
-        CREATE TABLE ${sql.ident(tablename)} (
-            id SERIAL PRIMARY KEY,
-            email TEXT UNIQUE NOT NULL,
-            name TEXT NOT NULL,
-            age INTEGER,
-            status TEXT DEFAULT 'active',
-            last_login TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            attempts INTEGER DEFAULT 0,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-        )`
-    await pool.query`CREATE INDEX IF NOT EXISTS idx_users_status_age ON ${sql.ident(tablename)} (status, age)`
-
+describe("Performance test", () => {
+    let pool: Pool
     before(async () => {
+        pool = new Pool({
+            host: process.env.PGHOST || 'localhost',
+            user: process.env.PGUSER || 'postgres',
+            password: process.env.PGPASSWORD || 'postgres',
+            database: process.env.PGDATABASE || 'pgtx_test',
+            port: Number(process.env.PGPORT) || 5433,
+            max: Number(process.env.PGMAX) || 10
+        })
+
+        await pool.query`DROP TABLE IF EXISTS ${sql.ident(tablename)}`
+        await pool.query`
+            CREATE TABLE ${sql.ident(tablename)} (
+                id SERIAL PRIMARY KEY,
+                email TEXT UNIQUE NOT NULL,
+                name TEXT NOT NULL,
+                age INTEGER,
+                status TEXT DEFAULT 'active',
+                last_login TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                attempts INTEGER DEFAULT 0,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )`
+        await pool.query`CREATE INDEX IF NOT EXISTS idx_users_status_age ON ${sql.ident(tablename)} (status, age)`
+
         console.log('Warming')
         
         await runPgtxBench(pool)
-    })
+    }, {timeout: Infinity})
 
     after(async () => {        
         await pool.close()
@@ -86,5 +88,5 @@ const runPgtxBench = async (pool: Pool) => {
     await Promise.all(workers.map(w => w()))
 
     
-    assert.strictEqual(counter, 2000, "counter mismatch")
+    assert.strictEqual(counter, TOTAL_REQUESTS, "counter mismatch")
 }

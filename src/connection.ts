@@ -26,7 +26,8 @@ export type ConnectionParams = {
     logLevel?: LogLevel
 }
 
-const ErrConnectionDead = new Error("Connection is Dead")
+const ErrConnectionClosed = new Error("Connection is closed")
+const ErrConnectionReconnecring = new Error("Connection are reconnecting")
 
 
 export type ExecuteQueueUnit = {
@@ -115,6 +116,12 @@ export class Connection {
         return `s-${this._stmtCounter++}` as StatementName
     }
 
+
+    private _checkOpened() {
+        if (!this.isOpened) throw ErrConnectionClosed
+    }
+
+
     private constructor(
         socket: Socket,
         writer: ConnectionRequestWriter,
@@ -125,10 +132,7 @@ export class Connection {
         this._logLevel = logLevel
         this._socket = new SocketConnector(socket, 
             (type, reader) => this._handlePacket(type, reader),
-            (err) => {
-                this._isReconnecting = true
-                this._rejectPipeline(ErrConnectionDead)
-            }
+            (err) => this._registerReconnect()
         )
         this._writer = writer
     }
@@ -185,8 +189,8 @@ export class Connection {
      * ```
      */
     query<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]): Promise<T[]> {
+        this._checkOpened()
         this._registerFlush()
-        if (!this._isOpened) throw ErrConnectionDead
 
         const {text, args} = compileSqlTemplate({templates, args: params}) as {text: QueryText, args: (string | null)[]}
         
@@ -224,7 +228,7 @@ export class Connection {
      * ```
      */
     async begin<T>(txCallback: (transaction: Transaction) => Promise<T>): Promise<T> {
-        if (!this._isOpened) throw ErrConnectionDead
+        this._checkOpened()
 
         const tx = new Transaction(this)
         
@@ -256,6 +260,7 @@ export class Connection {
      * ```
      */
     notify(channelName: string, payload: string = "") {
+        this._checkOpened()
         return this.query`select pg_notify(${channelName}, ${payload})` as Promise<[]>
     }
 
@@ -272,6 +277,7 @@ export class Connection {
      * ```
      */
     listen(channelName: string, callback: (payload: string) => void) {
+        this._checkOpened()
         if (!this._listeningCallbacks.has(channelName as ChannelName)) {
             this._listeningCallbacks.set(channelName as ChannelName, new Set())
         }
@@ -296,6 +302,7 @@ export class Connection {
      * ```
      */
     unlisten(channelName: string, callback: (payload: string) => void) {
+        this._checkOpened()
         if (!this._listeningCallbacks.has(channelName as ChannelName)) {
             return Promise.resolve()
         }
@@ -368,7 +375,7 @@ export class Connection {
     }
 
 
-    private _writeQuery(query: Query<any>) {
+    private _writeQuery(query: Query<any>) {        
         if (query.state === QueryState.Parsing) {
             this._writer
                 .writeParse(query.statementName, query.text)
@@ -405,15 +412,14 @@ export class Connection {
 
     private _flush() {      
         if (!this._isOpened) {
-            this._rejectPipeline(ErrConnectionDead)
+            this._rejectPipeline(ErrConnectionClosed)
             return
         }
 
         if (this._isReconnecting) {
-            this._reconnect().then(socket => {
-                
+            this._reconnect().then(() => {
                 this._isFlushing = false
-                socket.write(this._writer.writeSync())
+                this._socket.write(this._writer.writeSync())
                 this._writer.clear()
             })
         }
@@ -425,37 +431,40 @@ export class Connection {
         }
     }
 
+    
+    private _registerReconnect() {
+        this._isReconnecting = true
+        this._rejectPipeline(ErrConnectionReconnecring)
+    }
 
-    private _reconnect(): Promise<SocketConnector> {
+
+    private _resetConnectionState(cause: Error) {
         this._parsed.clear()
         this._described.clear()
         this._describingPending.clear()
         this._parsingPending.clear()
         this._writer.clear()
+        
+        this._rejectPipeline(cause)
+    }
 
-        while (this._pipelinesQueue.hasMore) {
-            this._rejectPipeline(ErrConnectionDead)
-            this._pipelinesQueue.next()
-        }
 
-        this._pipelinesQueue = new Queue()
-        this._pipelinesQueue.push(new Queue())
+    private async _reconnect() {
+        this._resetConnectionState(ErrConnectionReconnecring)
 
-        return createAuthorizedSocket(ConnectionRequestWriter.new(), this.params)
-            .then(socket => {
-                const connector = new SocketConnector(
-                    socket, 
-                    (type, reader) => this._handlePacket(type, reader),
-                    (err) => {
-                        this._isReconnecting = true
-                        this._rejectPipeline(ErrConnectionDead)
-                    })
-                this._socket = connector
-                this._restoreSubscriptions()
-                this._isReconnecting = false
+        const socket = await createAuthorizedSocket(ConnectionRequestWriter.new(), this.params)
 
-                return connector
-            })
+        const connector = new SocketConnector(
+            socket, 
+            (type, reader) => this._handlePacket(type, reader),
+            (err) => this._registerReconnect()
+        )
+
+        this._socket = connector
+
+        void this._restoreSubscriptions()
+        
+        this._isReconnecting = false
     }
 
     
@@ -547,14 +556,14 @@ export class Connection {
                 reader.readCommandComplete()
 
                 if (this._pipelinesQueue.isFree) {
-                    this._destroyConnection()
+                    this.close()
                     break
                 }
 
                 const query = this._getCurrentQuery()
                 
                 if (!query) {
-                    this._destroyConnection()
+                    this.close()
                     break
                 }
 
@@ -640,17 +649,6 @@ export class Connection {
     }
 
 
-
-    private _destroyConnection() {
-        this._isOpened = false
-        this._socket.destroy()
-        while (this._pipelinesQueue.hasMore) {
-            this._rejectPipeline(ErrConnectionDead)
-            this._pipelinesQueue.next()
-        }
-    }
-
-
     /**
      * Closes the connection immediately.
      * All pending queries will be rejected with an error.
@@ -662,6 +660,11 @@ export class Connection {
      * ```
      */
     close() {
-        this._destroyConnection()
+        this._isOpened = false
+        this._socket.destroy()
+        while (this._pipelinesQueue.hasMore) {
+            this._rejectPipeline(ErrConnectionClosed)
+            this._pipelinesQueue.next()
+        }
     }
 }
