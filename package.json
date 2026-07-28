@@ -9,7 +9,7 @@
   "scripts": {
     "build": "tsc",
     "prepublishOnly": "npm run build",
-    "testGitHub": "node --import tsx --test --timeout 0 $(find tests -name '*.test.ts')",
+    "testGitHub": "node --import tsx --test 0 $(find tests -name '*.test.ts')",
     "test": "node --import tsx --test ./tests/*.test.ts"
   },
   "repository": {

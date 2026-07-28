@@ -18,8 +18,10 @@ const updateData = {
     attempts: 1 
 }
 
+const NO_TIMEOUT = { timeout: Infinity }
 
-describe("Performance test", () => {
+
+describe("Performance test", NO_TIMEOUT, () => {
     let pool: Pool
     before(async () => {
         pool = new Pool({
@@ -48,13 +50,13 @@ describe("Performance test", () => {
         console.log('Warming')
         
         await runPgtxBench(pool)
-    }, {timeout: Infinity})
+    }, NO_TIMEOUT)
 
     after(async () => {        
         await pool.close()
-    })
+    }, NO_TIMEOUT)
 
-    it("Throughput test", async () => {
+    it("Throughput test", NO_TIMEOUT, async () => {
         console.log(`\nRunning: ${TOTAL_REQUESTS} requests, ${CONCURRENCY} concurrent workers\n`)
 
         await runPgtxBench(pool)
