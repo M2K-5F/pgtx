@@ -1,5 +1,7 @@
+import { Begin, Future } from "fluent-future"
 import { IdentifierClause } from "./clauses"
 import { Connection } from "./connection"
+import { PostgresError } from "./error"
 
 /**
  * Represents an active SQL transaction.
@@ -28,29 +30,29 @@ export class Transaction {
     /**
      * Commits the current transaction.
      */
-    public async commit(): Promise<void> {
+    public commit() {
         this.checkActive()
 
-        await this.conn.query`COMMIT`
-        this.isFinished = true
+        return this.conn.query`COMMIT`
+            .tap(() => this.isFinished = true) as Future<[], PostgresError>
     }
 
     /**
      * Rolls back the current transaction.
      */
-    public async rollback(): Promise<void> {
+    public rollback() {
         this.checkActive()
 
-        await this.conn.query`ROLLBACK`
-        this.isFinished = true
+        return this.conn.query`ROLLBACK` 
+            .tap(() => this.isFinished = true) as Future<[], PostgresError>
     }
     
     /**
      * Executes a query within the current transaction.
      */
-    public async query<T extends Record<string, any>>(strings: TemplateStringsArray, ...values: any[]): Promise<T[]> {
+    public query<T extends Record<string, any>>(strings: TemplateStringsArray, ...values: any[]) {
         this.checkActive()
-        return await this.conn.query<T>(strings, ...values)
+        return this.conn.query<T>(strings, ...values)
     }
 
     /**
@@ -60,22 +62,18 @@ export class Transaction {
      * @example
      * await tx.savepoint('my_point', async (stx) => {
      *   await stx.query`INSERT ...`;
-     *   if (error) throw new Error(); // Only this insert rolls back
+     *   if (error) throw new Error() // Only this insert rolls back
      * });
      */
-    public async savepoint(name: string, callback: (tx: Transaction) => Promise<void>): Promise<Error | null> {
+    public savepoint<T>(name: string, callback: (tx: Transaction) => Promise<T>): Future<T, Error> {
         this.checkActive()
 
-        await this.conn.query`SAVEPOINT ${IdentifierClause.create(name)}`
-
-        try {
-            await callback(this)
-            await this.conn.query`RELEASE SAVEPOINT ${IdentifierClause.create(name)}`
-            return null
-        }
-        catch (err) {
-            await this.conn.query`ROLLBACK TO SAVEPOINT ${IdentifierClause.create(name)}`
-            return err instanceof Error ? err : new Error(String(err))
-        }
+        return Begin()
+            .andThen(() =>this.conn.query`SAVEPOINT ${IdentifierClause.create(name)}`)
+            .andThen(() => 
+                Future.of(callback(this))
+                    .tap(() => this.conn.query`RELEASE SAVEPOINT ${IdentifierClause.create(name)}`)
+                    .tapErr(() => this.conn.query`ROLLBACK TO SAVEPOINT ${IdentifierClause.create(name)}`)
+            )   
     }
 }

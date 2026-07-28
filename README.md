@@ -97,6 +97,25 @@ await pool.begin(async (tx) => {
 
 ---
 
+
+## 🎯 Typed Error Handling
+
+Pgtx queries return `Future<T, PostgresError>` from [fluent-future](https://www.npmjs.com/package/fluent-future) instead of raw `Promise<T>`. This gives you:
+
+- **Typed errors** — `PostgresError` with `code`, `severity`, `detail`
+- **Declarative recovery** — `.recover()`, `.recoverIf()` instead of try/catch
+- **Chain composition** — `.andThen()`, `.orElse()`, `.tap()`, `.tapErr()`
+
+```typescript
+const users = await pool.query<User>`SELECT * FROM users WHERE id = ${1}`
+  .recoverIf(err => err.code === '42P01', [])  // undefined_table → []
+  .recoverIf(err => err.code === '23505', [])  // unique_violation → []
+  .tapErr(err => logger.error(err))            // log remaining errors
+```
+
+---
+
+
 ## 📖 Features
 
 ### Transactions & Savepoints
@@ -105,11 +124,11 @@ await pool.begin(async (tx) => {
 await pool.begin(async (tx) => {
   await tx.query`INSERT INTO orders (user_id) VALUES (${userId})`
   
-  // err: Error | null
-  const err = await tx.savepoint('update_stock', async (stx) => {
+  await tx.savepoint('update_stock', async (stx) => {
     await stx.query`UPDATE stock SET count = count - 1 WHERE product_id = ${productId}`
-    if (outOfStock) throw new Error() // Only savepoint rolls back
+    if (outOfStock) throw new Error('out of stock') // Only savepoint rolls back
   })
+  .tapErr(console.log) // Error: out of stock
 })
 ```
 
@@ -280,11 +299,11 @@ await pool.query`
 class Connection {
     static new(params: ConnectionParams): Promise<Connection>
 
-    query<T>(strings: TemplateStringsArray, ...values: any[]): Promise<T[]>
-    begin<T>(callback: (tx: Transaction) => Promise<T>): Promise<T>
-    notify(channelName: string, payload?: string): Promise<[]>
-    listen(channelName: string, callback: (payload: string) => void): Promise<[]>
-    unlisten(channelName: string, callback: (payload: string) => void): Promise<[]>
+    query<T>(strings: TemplateStringsArray, ...values: any[]): Promise<T[], PostgresError>
+    begin<T>(callback: (tx: Transaction) => Promise<T>): Future<T, Error>
+    notify(channelName: string, payload?: string): Future<[], PostgresError>
+    listen(channelName: string, callback: (payload: string) => void): Future<[], PostgresError>
+    unlisten(channelName: string, callback: (payload: string) => void): Future<[], PostgresError>
 
     get isAlive(): boolean
     close(): void
@@ -306,12 +325,12 @@ interface ConnectionParams {
 class Pool {
     constructor(config: PoolConfig)
 
-    query<T>(strings: TemplateStringsArray, ...values: any[]): Promise<T[]>
-    begin<T>(callback: (tx: Transaction) => Promise<T>): Promise<T>
-    notify(channelName: string, payload?: string): Promise<[]>
-    acquire(): Promise<Connection>
+    query<T>(strings: TemplateStringsArray, ...values: any[]): Future<T[], Error>
+    begin<T>(callback: (tx: Transaction) => Promise<T>): Future<T, Error>
+    notify(channelName: string, payload?: string): Future<[], PostgresError>
+    acquire(): Future<Connection, Error>
     release(conn: Connection): void
-    close(): Promise<void>
+    close(): void
 
     get size(): number
     get total(): number
@@ -326,10 +345,10 @@ interface PoolConfig extends ConnectionParams {
 
 ```typescript
 class Transaction {
-  query<T>(strings: TemplateStringsArray, ...values: any[]): Promise<T[]>
-  commit(): Promise<void>
-  rollback(): Promise<void>
-  savepoint<T>(name: string, callback: (tx: Transaction) => Promise<T>): Promise<T>
+  query<T>(strings: TemplateStringsArray, ...values: any[]): Future<T[], PostgresError>
+  commit(): Future<[], PostgresError>
+  rollback(): Future<[], PostgresError>
+  savepoint<T>(name: string, callback: (tx: Transaction) => Promise<T>): Future<T, Error>
 
   get isActive(): boolean
 }

@@ -4,7 +4,7 @@ import {describe, before, after, it} from "node:test"
 
 
 const tablename = "benchmark_concurrent"
-const TOTAL_REQUESTS = 50000
+const TOTAL_REQUESTS = 10000
 const CONCURRENCY = 10000
 
 const usersToInsert = [

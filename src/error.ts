@@ -1,14 +1,14 @@
 export class PostgresError extends Error {
     constructor(
         public override message: string, 
-        public code: string, 
-        public detail: string, 
-        public severity: string,
-        public where: string,
-        public hint: string,          
-        public position: string,      
-        public dataType: string,      
-        public constraint: string     
+        public code: string = 'undeclared', 
+        public detail: string = '', 
+        public severity: string = '',
+        public where: string = '',
+        public hint: string = '',          
+        public position: string = '',      
+        public dataType: string = '',      
+        public constraint: string = ''     
     ) {
         super(message)
         this.name = "PostgresError"

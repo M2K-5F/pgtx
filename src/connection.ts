@@ -11,9 +11,9 @@ import { Transaction } from "./transaction"
 import { SocketConnector } from "./protocol/socket-connector"
 import { Queue } from "./queue"
 import { Query, QueryState } from "./query"
-import { QuicSession } from "node:quic"
 import { sql } from "."
-import { writer } from "repl"
+import {Begin, Future, Resolve} from 'fluent-future'
+import { PostgresError } from "./error"
 
 type LogLevel = "none" | "error" | "notice" | "query"
 
@@ -26,8 +26,8 @@ export type ConnectionParams = {
     logLevel?: LogLevel
 }
 
-const ErrConnectionClosed = new Error("Connection is closed")
-const ErrConnectionReconnecring = new Error("Connection are reconnecting")
+const ErrConnectionClosed = new PostgresError("Connection is closed", 'connection_closed', "", "ERROR")
+const ErrConnectionReconnecring = new PostgresError("Connection are reconnecting", "connection_reconnecting", "", "ERROR")
 
 
 export type ExecuteQueueUnit = {
@@ -156,11 +156,10 @@ export class Connection {
      * })
      * ```
      */
-    static async new(params: ConnectionParams) {
+    static new(params: ConnectionParams) {
         const writer = ConnectionRequestWriter.new()
-        const socket = await createAuthorizedSocket(writer, params)
-        
-        return new Connection(socket, writer, params.logLevel || 'error', params)
+        return createAuthorizedSocket(writer, params)
+            .andThen(socket => Resolve(new Connection(socket, writer, params.logLevel || 'error', params)))
     }
 
 
@@ -188,7 +187,7 @@ export class Connection {
      * const users = await conn.query<User>`SELECT * FROM users`
      * ```
      */
-    query<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]): Promise<T[]> {
+    query<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]) {
         this._checkOpened()
         this._registerFlush()
 
@@ -201,8 +200,12 @@ export class Connection {
         const query = this._createQuery<T>(text, args)
 
         this._writeQuery(query)
+    
+        return Future.of(query.promise, error => {
+            if (error instanceof PostgresError) return error
 
-        return query.promise
+            return new PostgresError(error.message)
+        })
     }
 
 
@@ -227,24 +230,22 @@ export class Connection {
      * })
      * ```
      */
-    async begin<T>(txCallback: (transaction: Transaction) => Promise<T>): Promise<T> {
+    begin<T>(txCallback: (transaction: Transaction) => Promise<T>) {
         this._checkOpened()
 
         const tx = new Transaction(this)
-        
-        try {
-            await tx.query`BEGIN`
 
-            const result = await txCallback(tx)
-
-            if (tx.isActive) await tx.commit()
-
-            return result
-        } 
-        catch (err) {
-            if (tx.isActive) await tx.rollback()
-            throw err
-        }
+        return Begin()
+            .andThen(() => tx.query`BEGIN`)    
+            .andThen(() => 
+                Future.of(txCallback(tx))
+                    .tap(() => {
+                        if (tx.isActive) return tx.commit()
+                    })
+                    .tapErr(() => {
+                        if (tx.isActive) return tx.rollback()
+                    })
+            )
     }
 
 
@@ -261,7 +262,7 @@ export class Connection {
      */
     notify(channelName: string, payload: string = "") {
         this._checkOpened()
-        return this.query`select pg_notify(${channelName}, ${payload})` as Promise<[]>
+        return this.query`select pg_notify(${channelName}, ${payload})`
     }
 
 
@@ -301,10 +302,10 @@ export class Connection {
      * await conn.unlisten('events', callback)
      * ```
      */
-    unlisten(channelName: string, callback: (payload: string) => void) {
+    unlisten(channelName: string, callback: (payload: string) => void): Future<[], PostgresError> {
         this._checkOpened()
         if (!this._listeningCallbacks.has(channelName as ChannelName)) {
-            return Promise.resolve()
+            return Resolve([])
         }
 
         const callbackSet = this._listeningCallbacks.get(channelName as ChannelName)!
@@ -313,10 +314,10 @@ export class Connection {
 
         if (callbackSet.size === 0) {
             this._listeningCallbacks.delete(channelName as ChannelName)
-            return this.query`unlisten ${sql.ident(channelName)};`
+            return this.query`unlisten ${sql.ident(channelName)};` as Future<[], PostgresError>
         }
         
-        return Promise.resolve()
+        return Resolve([])
     }
     
     
@@ -438,7 +439,7 @@ export class Connection {
     }
 
 
-    private _resetConnectionState(cause: Error) {
+    private _resetConnectionState(cause: PostgresError) {
         this._parsed.clear()
         this._described.clear()
         this._describingPending.clear()
@@ -484,7 +485,7 @@ export class Connection {
     }
 
 
-    private _rejectPipeline(error: Error) {
+    private _rejectPipeline(error: PostgresError) {
         if (this._pipelinesQueue.isFree) return 
 
         const queue = this._pipelinesQueue.get()

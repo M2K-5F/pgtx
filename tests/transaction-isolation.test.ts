@@ -1,6 +1,6 @@
 import { after, before, describe, it } from "node:test"
 import { Pool, sql } from "../src"
-import assert from "assert"
+import assert, { rejects, throws } from "assert"
 
 const tablename = "transaction_isolation_test"
 
@@ -95,12 +95,14 @@ describe("Transaction isolation test", async () => {
                 await tx.query`insert into ${sql.ident(tablename)} ${sql.insert<Table>({id: 2, status: "stable"})}`
             })
 
-            const err = await tx.savepoint("savepoint 2", async spt => {
-                await spt.query`insert into ${sql.ident(tablename)} ${sql.insert<Table>({id: 3, status: 'success'}, {id: 4, status: "stable"})}`
-                throw new Error("savepoint failed")
-            })
-
-            assert(err, new Error("savepoint failed"))
+            await rejects(
+                async () => 
+                    await tx.savepoint("savepoint 2", async spt => {
+                        await spt.query`insert into ${sql.ident(tablename)} ${sql.insert<Table>({id: 3, status: 'success'}, {id: 4, status: "stable"})}`
+                        throw new Error("savepoint failed")
+                    }),
+                new Error("savepoint failed")
+            )
         })
 
         const rows = await pool.query<Table>`SELECT * from ${sql.ident(tablename)}`

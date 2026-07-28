@@ -2,6 +2,8 @@ import { Connection, ConnectionParams } from "./connection"
 import { Transaction } from "./transaction"
 import { Queue } from "./queue";
 import { log } from "console";
+import { Future, Resolve } from "fluent-future";
+import { PostgresError } from "./error";
 
 
 type PoolParams = ConnectionParams & {
@@ -46,7 +48,7 @@ type Waiter = {
  * }
  * 
  * // Clean up
- * await pool.close()
+ *  pool.close()
  * ```
  */
 export class Pool {
@@ -85,7 +87,7 @@ export class Pool {
      * }
      * ```
      */
-    async acquire(): Promise<Connection> {       
+    acquire() {       
         this._checkClosed()
 
         while (this._available.hasMore) {
@@ -93,24 +95,21 @@ export class Pool {
             this._available.next()
 
             if (conn.isOpened) {
-                return conn
+                return Resolve(conn)
             }
             this._total--
         }
 
         if (this._total < this._max) {
             this._total++
-            try {
-                return await Connection.new(this._config)
-            } catch (err) {
-                this._total--
-                throw err
-            }
+            return Future.of(Connection.new(this._config))
+                .tapErr(() => this._total--)
+            
         }
 
-        return new Promise((resolve, reject) => {
+        return Future.of(new Promise<Connection>((resolve, reject) => {
             this._waiting.push({ resolve, reject })
-        })
+        }))
     }
 
 
@@ -170,15 +169,14 @@ export class Pool {
      * })
      * ```
      */
-    async begin<T>(txCallback: (transaction: Transaction) => Promise<T>): Promise<T> {
+    begin<T>(txCallback: (transaction: Transaction) => Promise<T>) {
         this._checkClosed()
 
-        const conn = await this.acquire()
-        try {
-            return conn.begin(txCallback)
-        } finally {
-            this.release(conn)
-        }
+        return this.acquire()
+            .andThen(conn => 
+                conn.begin(txCallback)
+                    .finally(() => this.release(conn))
+            )
     }
 
 
@@ -205,14 +203,14 @@ export class Pool {
      * const users = await pool.query<User>`SELECT * FROM users`
      * ```
      */
-    query<T extends Record<string, any>>(templates: TemplateStringsArray, ...args: any[]): Promise<T[]> {  
+    query<T extends Record<string, any>>(templates: TemplateStringsArray, ...args: any[]) {  
         this._checkClosed()
 
         while (this._available.hasMore) {
             
             const conn = this._available.get()
             if (conn.isOpened) {
-                return conn.query(templates, ...args)
+                return conn.query<T>(templates, ...args)
             }
             
             this._available.next()
@@ -221,19 +219,16 @@ export class Pool {
         
         if (this._total < this._max) {
             this._total++
-            return Connection.new(this._config)
-                .catch(err => {
-                    this._total--
-                    throw err
-                })
-                .then(conn => {
+            return Future.of(Connection.new(this._config))
+                .tapErr(() => this._total--)
+                .andThen(conn => {
                     this.release(conn)
-                    return conn.query(templates, ...args)
+                    return conn.query<T>(templates, ...args)
                 })
         }
 
         return this.acquire()
-            .then(conn => {
+            .andThen(conn => {
                 this.release(conn) 
                 return conn.query<T>(templates, ...args)
             })
@@ -252,7 +247,7 @@ export class Pool {
      * ```
      */
     notify(channelName: string, payload: string = "") {
-        return this.query`select pg_notify(${channelName}, ${payload})` as Promise<[]>
+        return this.query`select pg_notify(${channelName}, ${payload})` as Future<[], PostgresError>
     }
 
 
@@ -281,10 +276,10 @@ export class Pool {
      * 
      * @example
      * ```ts
-     * await pool.close()
+     *  pool.close()
      * ```
      */
-    async close() {
+    close() {
         while (this._available.hasMore) {
             const conn = this._available.get()
             this._available.next()
