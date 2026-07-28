@@ -118,6 +118,26 @@ const users = await pool.query<User>`SELECT * FROM users WHERE id = ${1}`
 
 ## 📖 Features
 
+
+### Pipeline by Default
+
+`Bind` and `.bind` from [fluent-future](https://www.npmjs.com/package/fluent-future) automatically multiplex independent queries over PostgreSQL pipeline protocol — no manual batching required:
+
+```typescript
+// 5 queries, only 2 network round-trips
+const {user, posts, ...data} = await Bind({
+  user: () => pool.query<User>`...`,
+  config: () => pool.query<Config>`...`,
+  announcements: () => pool.query<Announcement>`...`
+})
+.bind({
+  posts: ({ user }) => pool.query<Post>`...`,
+  notifications: ({ user }) => pool.query<Notif>`...`
+})
+```
+> 🚀 Pgtx automatically groups concurrent queries into pipeline batches, reducing network overhead by up to 5x compared to sequential queries.
+
+
 ### Transactions & Savepoints
 
 ```typescript
@@ -299,7 +319,7 @@ await pool.query`
 class Connection {
     static new(params: ConnectionParams): Promise<Connection>
 
-    query<T>(strings: TemplateStringsArray, ...values: any[]): Promise<T[], PostgresError>
+    query<T>(strings: TemplateStringsArray, ...values: any[]): Future<T[], PostgresError>
     begin<T>(callback: (tx: Transaction) => Promise<T>): Future<T, Error>
     notify(channelName: string, payload?: string): Future<[], PostgresError>
     listen(channelName: string, callback: (payload: string) => void): Future<[], PostgresError>
@@ -370,6 +390,11 @@ const sql: {
 ```
 
 ---
+
+
+Pgtx is a PostgreSQL driver.
+
+It is not an ORM.
 
 ## 📝 License
 
