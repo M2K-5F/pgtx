@@ -207,14 +207,15 @@ export class Pool {
         this._checkClosed()
 
         while (this._available.hasMore) {
-            
             const conn = this._available.get()
-            if (conn.isOpened) {
-                return conn.query<T>(templates, ...args)
-            }
-            
             this._available.next()
-            this._total--
+            if (!conn.isOpened) {
+                this._total--
+                continue
+            }
+
+            this._available.push(conn)
+            return conn.query<T>(templates, ...args)
         }
         
         if (this._total < this._max) {

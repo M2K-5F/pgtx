@@ -15,8 +15,8 @@ const pgtxPool = new PgtxPool({...config})
 const pgPool = new PgPool(config)
 
 const tablename = "benchmark_concurrent"
-const TOTAL_REQUESTS = 5000
-const CONCURRENCY = 5000
+const TOTAL_REQUESTS = 10000
+const CONCURRENCY = 10000
 
 const usersToInsert = [
     { email: 'test1@test.com', name: 'User 1', age: 25 },
@@ -109,7 +109,9 @@ async function run() {
         
         console.log('Warming')
         await runPgtxBench()
+        console.log('Pgtx warmed')
         await runNativeBench()
+        console.log('Pg warmed')
         
         console.log(`\nRunning: ${TOTAL_REQUESTS} requests, ${CONCURRENCY} concurrent workers\n`)
 
@@ -132,6 +134,7 @@ async function run() {
 
         const diff = (((pgtxTime / nativeTime) - 1) * 100).toFixed(2)
         console.log(`\n${diff}% difference`)
+        console.log(`${(nativeTime / pgtxTime).toFixed(1)}x`)
 
     } catch (err) {
         console.error(err)
