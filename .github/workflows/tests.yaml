@@ -83,7 +83,7 @@ jobs:
         run: npm run build
 
       - name: Run benchmark
-        run: npx tsx tests/benchmark.test.ts
+        run: npx tsx benchmark.ts
         env:
           PGHOST: localhost
           PGPORT: 5433
