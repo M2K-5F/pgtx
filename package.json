@@ -1,6 +1,7 @@
 {
   "name": "@m2k-5f/pgtx",
   "version": "2.3.0",
+  "type": "module", 
   "description": "Blazing-fast PostgreSQL driver with pipeline support.",
   "files": [
     "dist",
@@ -41,7 +42,9 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
+    "mitata": "^1.0.34",
     "pg": "^8.22.0",
+    "postgres": "^3.4.9",
     "tsx": "^4.21.0",
     "typescript": "^5.0.0"
   },
