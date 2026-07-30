@@ -11,7 +11,8 @@
     "build": "tsc",
     "prepublishOnly": "npm run build",
     "testGitHub": "node --import tsx --test $(find tests -name '*.test.ts')",
-    "test": "node --import tsx --test ./tests/*.test.ts"
+    "test": "node --import tsx --test ./tests/*.test.ts",
+    "benchmark": "npx tsx benchmark.ts"
   },
   "repository": {
     "type": "git",
