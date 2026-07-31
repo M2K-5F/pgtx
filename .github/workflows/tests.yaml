@@ -142,6 +142,6 @@ jobs:
           sleep 3
           
           echo "BENCHMARKING POSTGRES.JS"
-          wrk -t2 -c1000 -d10s --latency http://localhost:3000/users
+          wrk -t2 -c1000 -d10s --latency http://localhost:3001/users
           
-          kill -9 $SERVER_PID
+          kill -9 $SERVER_PID 2>/dev/null || true

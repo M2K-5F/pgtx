@@ -27,6 +27,6 @@ const server = createServer(async (req, res) => {
   res.end();
 });
 
-server.listen(3000, () => {
+server.listen(3001, () => {
   console.log('Postgres.js Server running on http://localhost:3000');
 });
