@@ -87,7 +87,7 @@ jobs:
 
       - name: Install wrk 
         run: |
-          sudo apt-get wrk
+          sudo apt install wrk
 
       - name: Run native mitata benchmark
         run: npx tsx benchmark.ts
