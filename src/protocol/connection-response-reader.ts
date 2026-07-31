@@ -1,8 +1,11 @@
-import { AuthenticationCode, ResponseType, TransactionStatus } from "./constants"
+import { AuthenticationCode, DataTypeOid, DataTypeOids, ResponseType, TransactionStatus } from "./constants"
 import { ColumnDescription } from "../types"
 import { PostgresError } from "../error"
 import { ChannelName } from "../connection"
 
+
+const columnValueCache = new Map<number, Map<string, string>>()
+const POSTGRES_EPOCH_MS = 946684800000
 
 export class ConnectionResponseBuffer {
     private caret = 0
@@ -65,6 +68,45 @@ export class ConnectionResponseBuffer {
     }
 
 
+    readRawBinaryString(length: number): string {
+        const text = this.buffer.toString('latin1', this.caret, this.caret + length)
+        this.caret += length
+        return text
+    }
+
+
+    readBinaryDate(): Date {
+        const daysSince2000 = this.readInt32()
+        const ms = POSTGRES_EPOCH_MS + (daysSince2000 * 86400000)
+        return new Date(ms)
+    }
+
+
+    readBinaryTimestamp(): Date {
+        const microSecondsSince2000 = this.readInt64()
+        const msSince2000 = Number(microSecondsSince2000 / 1000n)
+        return new Date(POSTGRES_EPOCH_MS + msSince2000)
+    }
+
+
+    readBinaryTime(): string {
+        const microSecondsSinceMidnight = this.readInt64()
+        const totalMs = Number(microSecondsSinceMidnight / 1000n)
+        
+        const seconds = Math.floor(totalMs / 1000)
+        const ms = totalMs % 1000
+        const minutes = Math.floor(seconds / 60)
+        const hours = Math.floor(minutes / 60)
+
+        return `${String(hours).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}.${String(ms).padStart(3, '0')}`
+    }
+
+
+    skipBytes(byteCount: number) {
+        this.caret += byteCount
+    }
+
+
     hasFullPacket(): boolean {
         const availableBytes = this.buffer.length - this.caret
 
@@ -80,6 +122,24 @@ export class ConnectionResponseBuffer {
     
     getResidualBuffer() {
         return this.buffer.subarray(this.caret)
+    }
+
+    readBool() {
+        const value = this.buffer[this.caret] !== 0
+        this.caret++
+        return value
+    }
+
+    readInt64(): bigint {
+        const value = this.buffer.readBigInt64BE(this.caret)
+        this.caret += 8
+        return value
+    }
+
+    readFloat64(): number {
+        const value = this.buffer.readDoubleBE(this.caret)
+        this.caret += 8
+        return value
     }
 }
 
@@ -207,7 +267,7 @@ export class ConnectionResponseReader {
 
 
     readRowDescription() {
-        this.buffer.readInt32()
+        this.buffer.skipBytes(4)
         const columnsCount = this.buffer.readInt16()
         const columns = new Array<ColumnDescription>(columnsCount)
 
@@ -218,7 +278,7 @@ export class ConnectionResponseReader {
 
             columns[i] = {
                 name: name,
-                typeOID: this.buffer.readInt32(),
+                typeOID: this.buffer.readInt32() as DataTypeOid,
             }
             
             this.buffer.readInt32()
@@ -229,18 +289,103 @@ export class ConnectionResponseReader {
     }
 
 
-    readDataRow() {
-        this.buffer.readInt32()
+    readDataRow(descriptions: ColumnDescription[], int8toBigint: boolean = false): any[] {
+        this.buffer.skipBytes(4)
         const fieldsCount = this.buffer.readInt16()
-        const rowValues: (string | null)[] = [];
+        const rowValues: any[] = []
 
         for (let i = 0; i < fieldsCount; i++) {
-            const fieldLength = this.buffer.readInt32()
+            let fieldLength = this.buffer.readInt32()
 
             if (fieldLength === -1) {
                 rowValues.push(null)
-            } else {
-                rowValues.push(this.buffer.readRawString(fieldLength))
+                continue
+            }
+
+            const desc = descriptions[i]
+            const oid = desc ? desc.typeOID : 0
+
+            switch (oid) {
+                case DataTypeOids.Jsonb: { 
+                    this.buffer.skipBytes(1)
+                    const jsonText = this.buffer.readRawString(fieldLength - 1)
+                    rowValues.push(JSON.parse(jsonText))
+                } break
+
+                case DataTypeOids.Json: {
+                    const jsonText = this.buffer.readRawString(fieldLength)
+                    rowValues.push(JSON.parse(jsonText))
+                } break
+
+                case DataTypeOids.Int4: {
+                    rowValues.push(this.buffer.readInt32())
+                } break
+
+                case DataTypeOids.Int2: {
+                    rowValues.push(this.buffer.readInt16())
+                } break
+
+                case DataTypeOids.Bool: {
+                    rowValues.push(this.buffer.readBool())
+                } break
+
+                case DataTypeOids.Int8: {
+                    const bigint = this.buffer.readInt64()
+                    rowValues.push(int8toBigint ? bigint : Number(bigint))
+                } break
+
+                case DataTypeOids.Float8: {
+                    rowValues.push(this.buffer.readFloat64())
+                } break
+
+                case DataTypeOids.Date: {
+                    rowValues.push(this.buffer.readBinaryDate())
+                } break
+
+                case DataTypeOids.Timestamp:   
+                case DataTypeOids.Timestamptz: {
+                    rowValues.push(this.buffer.readBinaryTimestamp())
+                } break
+
+                case DataTypeOids.Time: {
+                    rowValues.push(this.buffer.readBinaryTime())
+                } break
+
+                case DataTypeOids.Timetz: {
+                    const timeStr = this.buffer.readBinaryTime()
+                    this.buffer.skipBytes(4)
+                    rowValues.push(timeStr)
+                } break
+
+                case DataTypeOids.Text:
+                case DataTypeOids.Varchar:
+                case DataTypeOids.Uuid: {
+                    if (fieldLength <= 32) {
+                        let cacheForColumn = columnValueCache.get(i)
+                        if (!cacheForColumn) {
+                            cacheForColumn = new Map<string, string>()
+                            columnValueCache.set(i, cacheForColumn)
+                        }
+
+                        const byteKey = this.buffer.readRawBinaryString(fieldLength)
+                        let cachedString = cacheForColumn.get(byteKey)
+
+                        if (cachedString === undefined) {
+                            cachedString = Buffer.from(byteKey, 'binary').toString('utf-8')
+                            if (cacheForColumn.size < 512) {
+                                cacheForColumn.set(byteKey, cachedString)
+                            }
+                        }
+                        rowValues.push(cachedString)
+                    } else {
+                        rowValues.push(this.buffer.readRawString(fieldLength))
+                    }
+                } break
+
+                default: {
+                    this.buffer.skipBytes(fieldLength)
+                    rowValues.push(undefined)
+                } break
             }
         }
 

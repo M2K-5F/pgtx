@@ -34,6 +34,68 @@ export const ResponseTypes = {
 } as const
 
 
+export const DataTypeOids = {
+    Bool: 16,
+    Bytea: 17, 
+
+    Char: 18,
+    Name: 19,
+    Text: 25,
+    Varchar: 1043,
+    Bpchar: 1042, 
+
+    
+    Int2: 21, 
+    Int4: 23, 
+    Int8: 20, 
+
+    Float4: 700, 
+    Float8: 701, 
+    Numeric: 1700, 
+
+    Timestamp: 1114,    
+    Timestamptz: 1184,  
+    Date: 1082,
+    Time: 1083,
+    Timetz: 1266,
+    Interval: 1186,
+
+    Json: 114,
+    Jsonb: 3802,
+
+    Uuid: 2950,
+    Cidr: 650,
+    Inet: 869,
+    Macaddr: 829,
+
+    Oid: 26,
+    Xid: 28,
+    Cid: 29,
+    Regproc: 24,
+
+    Point: 600,
+    Lseg: 601,
+    Path: 602,
+    Box: 603,
+    Polygon: 604,
+    Line: 628,
+
+    BoolArray: 1000,
+    Int2Array: 1005,
+    Int4Array: 1007,
+    Int8Array: 1016,
+    TextArray: 1009,
+    VarcharArray: 1015,
+    JsonArray: 199,
+    JsonbArray: 3807,
+    UuidArray: 2951,
+    NumericArray: 1231
+} as const
+
+export type DataTypeOid = typeof DataTypeOids[keyof typeof DataTypeOids];
+
+
+
 export type ResponseType = ValueOF<typeof ResponseTypes>
 
 

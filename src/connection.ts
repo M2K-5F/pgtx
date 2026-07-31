@@ -4,7 +4,6 @@ import { ConnectionRequestWriter } from "./protocol/connection-request-writer"
 import { createAuthorizedSocket } from "./protocol/socket-authorization"
 import { ResponseType, ResponseTypes, TransactionStatuses } from "./protocol/constants"
 import { ConnectionResponseReader } from "./protocol/connection-response-reader"
-import { parseRowValues } from "./utils/value-parser"
 import { compileSqlTemplate } from "./utils/template-compiler"
 import { Branded, ColumnDescription } from "./types"
 import { Transaction } from "./transaction"
@@ -23,7 +22,8 @@ export type ConnectionParams = {
     host: string
     port: number
     database: string
-    logLevel?: LogLevel
+    logLevel?: LogLevel,
+    int8toBigint?: boolean
 }
 
 const ErrConnectionClosed = new PostgresError("Connection is closed", 'connection_closed', "", "ERROR")
@@ -549,7 +549,11 @@ export class Connection {
             case ResponseTypes.DataRow: {
                 const query = this._getCurrentQuery()
 
-                query.rows.push(reader.readDataRow())
+                if (!query.columns) {
+                    query.columns = this._described.get(query.statementName)!
+                }
+
+                query.rows.push(reader.readDataRow(query.columns, this.params.int8toBigint))
             } break
 
 
@@ -577,7 +581,7 @@ export class Connection {
                 this._pipelinesQueue.get().next()                
 
                 query.resolve(
-                    parseRowValues(query.columns, query.rows)
+                    query.toObjects()
                 )
             } break
 

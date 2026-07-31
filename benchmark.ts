@@ -41,6 +41,23 @@ await pgPool.query(`
 `)
 
 group(`${CONCURRENCY} parallel SELECT-queries`, () => {
+  bench('postgres.js (Pipeline)', async () => {
+    const promises: Promise<void>[] = []
+    
+    for (let i = 0; i < CONCURRENCY; i++) {
+      const targetId = (i % 1000) + 1
+      
+      const p = sqlPostgres<User[]>`SELECT id, name, balance FROM bench_users WHERE id = ${targetId}`
+        .then((res) => {
+          const user = res[0]
+          validateUser(user, targetId)
+        })
+        
+      promises.push(p)
+    }
+    
+    await Promise.all(promises)
+  })
 
   bench('Pgtx (Pipeline)', async () => {
     const promises: Promise<void>[] = []
@@ -63,23 +80,7 @@ group(`${CONCURRENCY} parallel SELECT-queries`, () => {
     assert.equal(counter, CONCURRENCY)
   })
 
-  bench('postgres.js (Pipeline)', async () => {
-    const promises: Promise<void>[] = []
-    
-    for (let i = 0; i < CONCURRENCY; i++) {
-      const targetId = (i % 1000) + 1
-      
-      const p = sqlPostgres<User[]>`SELECT id, name, balance FROM bench_users WHERE id = ${targetId}`
-        .then((res) => {
-          const user = res[0]
-          validateUser(user, targetId)
-        })
-        
-      promises.push(p)
-    }
-    
-    await Promise.all(promises)
-  })
+  
 
   bench('node-postgres / pg', async () => {
     const promises: Promise<void>[] = []

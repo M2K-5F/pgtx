@@ -12,7 +12,6 @@ import {
 } from './clauses'
 import { Connection } from "./connection";
 import { Transaction } from "./transaction";
-import { setTypeParser } from "./utils/value-parser";
 /**
  * Core SQL tagging utility for Pgtx.
  * Provides type-safe helpers for building dynamic queries with recursive support.
@@ -144,6 +143,5 @@ export { Transaction as Transaction }
 
 export { PgtxPool as Pool }
 
-export { setTypeParser as setTypeParser }
 
 export * from "./clauses"

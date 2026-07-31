@@ -1,3 +1,5 @@
+import { DataTypeOid } from "./protocol/constants"
+
 export type PreparedStatement<TResult extends any, Tparams extends any[]> = {
     text: string, 
     name: string,
@@ -22,7 +24,7 @@ export type CompileSQLParams = {
 
 export type ColumnDescription = {
     name: string
-    typeOID: number
+    typeOID: DataTypeOid
 }
 
 export type Branded<T, Brand> = T & {__brand: Brand}

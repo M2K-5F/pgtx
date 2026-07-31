@@ -173,7 +173,7 @@ export class ConnectionRequestWriter {
             param && request.writeString(param)
         })
 
-        request.writeInt16(0).endRequest()
+        request.writeInt16(1).writeInt16(1).endRequest()
             
         return this
     }
