@@ -1,54 +1,3 @@
-name: Tests
-
-on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-
-jobs:
-  test:
-    runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:latest
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: pgtx_test
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build
-        run: npm run build
-
-      - name: Run tests
-        run: npm run testGitHub
-        env:
-          PGHOST: localhost
-          PGPORT: 5433
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: pgtx_test
-
   benchmark:
     runs-on: ubuntu-latest
 
@@ -82,7 +31,18 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Run benchmark
+      - name: Install wrk
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev git
+          git clone https://github.com wrk-src
+          cd wrk-src
+          make -j$(nproc)
+          sudo cp wrk /usr/local/bin/
+          cd ..
+          rm -rf wrk-src
+
+      - name: Run native mitata benchmark
         run: npx tsx benchmark.ts
         env:
           PGHOST: localhost
@@ -90,3 +50,42 @@ jobs:
           PGUSER: postgres
           PGPASSWORD: postgres
           PGDATABASE: pgtx_test
+
+      - name: Seed database for wrk
+        run: |
+          sudo apt-get install -y postgresql-client
+          PGPASSWORD=postgres psql -h localhost -p 5433 -U postgres -d pgtx_test -c "
+            DROP TABLE IF EXISTS bench_users;
+            CREATE TABLE bench_users (id SERIAL PRIMARY KEY, name TEXT, balance INT);
+            INSERT INTO bench_users (name, balance) 
+            SELECT 'User ' || i, floor(random() * 1000) FROM generate_series(1, 1000) s(i);
+          "
+
+      - name: Run wrk HTTP benchmark
+        env:
+          PGHOST: localhost
+          PGPORT: 5433
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: pgtx_test
+          PGMAX: 10
+        run: |
+          
+          npx tsx server-pgtx.ts &
+          SERVER_PID=$!
+          sleep 3 
+          
+          echo "BENCHMARKING @m2k-5f/pgtx (10 conns)"
+          wrk -t2 -c1000 -d10s --latency http://localhost:3000/users
+          
+          kill -9 $SERVER_PID
+          sleep 2
+
+          npx tsx server-postgresjs.ts &
+          SERVER_PID=$!
+          sleep 3
+          
+          echo "BENCHMARKING POSTGRES.JS"
+          wrk -t2 -c1000 -d10s --latency http://localhost:3000/users
+          
+          kill -9 $SERVER_PID

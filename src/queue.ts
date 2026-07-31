@@ -21,7 +21,7 @@ export class Queue<T> {
         this._pointer++
         if (this._pointer >= this._queue.length) {
             
-            this._queue = []
+            this._queue.length = 0
             this._pointer = 0
         }
         return item

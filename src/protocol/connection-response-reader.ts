@@ -4,7 +4,7 @@ import { PostgresError } from "../error"
 import { ChannelName } from "../connection"
 
 
-const columnValueCache = new Map<number, Map<string, string>>()
+const columnValueCache = new Map<number, Map<number, string>>()
 const POSTGRES_EPOCH_MS = 946684800000
 
 export class ConnectionResponseBuffer {
@@ -84,14 +84,14 @@ export class ConnectionResponseBuffer {
 
     readBinaryTimestamp(): Date {
         const microSecondsSince2000 = this.readInt64()
-        const msSince2000 = Number(microSecondsSince2000 / 1000n)
+        const msSince2000 = Number(microSecondsSince2000 / 1000)
         return new Date(POSTGRES_EPOCH_MS + msSince2000)
     }
 
 
     readBinaryTime(): string {
         const microSecondsSinceMidnight = this.readInt64()
-        const totalMs = Number(microSecondsSinceMidnight / 1000n)
+        const totalMs = Number(microSecondsSinceMidnight / 1000)
         
         const seconds = Math.floor(totalMs / 1000)
         const ms = totalMs % 1000
@@ -130,16 +130,38 @@ export class ConnectionResponseBuffer {
         return value
     }
 
-    readInt64(): bigint {
+    readBigInt64(): bigint {
         const value = this.buffer.readBigInt64BE(this.caret)
         this.caret += 8
         return value
     }
 
+
+    readInt64() {
+        const hi = this.buffer.readInt32BE(this.caret)
+        const lo = this.buffer.readUInt32BE(this.caret + 4)
+        this.caret += 8
+
+        return (hi * 4294967296) + lo
+    }
+
+
     readFloat64(): number {
         const value = this.buffer.readDoubleBE(this.caret)
         this.caret += 8
         return value
+    }
+
+    getBufferHash(length: number) {
+        let hash = 2166136261
+        const end = this.caret + length
+
+        for (let i = this.caret; i < end; i++) {
+            hash ^= this.buffer[i]
+            hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24)
+        }
+
+        return hash >>> 0
     }
 }
 
@@ -289,107 +311,97 @@ export class ConnectionResponseReader {
     }
 
 
-    readDataRow(descriptions: ColumnDescription[], int8toBigint: boolean = false): any[] {
+    readDataRow(descriptions: ColumnDescription[], int8toBigint: boolean = false): Record<string, any> {
         this.buffer.skipBytes(4)
         const fieldsCount = this.buffer.readInt16()
-        const rowValues: any[] = []
+        const row: Record<string, any> = {}
 
         for (let i = 0; i < fieldsCount; i++) {
-            let fieldLength = this.buffer.readInt32()
+            const fieldLength = this.buffer.readInt32()
+            const desc = descriptions[i]
+            const key = desc ? desc.name : `col_${i}`
 
             if (fieldLength === -1) {
-                rowValues.push(null)
+                row[key] = null
                 continue
             }
 
-            const desc = descriptions[i]
             const oid = desc ? desc.typeOID : 0
 
             switch (oid) {
-                case DataTypeOids.Jsonb: { 
-                    this.buffer.skipBytes(1)
-                    const jsonText = this.buffer.readRawString(fieldLength - 1)
-                    rowValues.push(JSON.parse(jsonText))
-                } break
-
-                case DataTypeOids.Json: {
-                    const jsonText = this.buffer.readRawString(fieldLength)
-                    rowValues.push(JSON.parse(jsonText))
-                } break
-
-                case DataTypeOids.Int4: {
-                    rowValues.push(this.buffer.readInt32())
-                } break
-
-                case DataTypeOids.Int2: {
-                    rowValues.push(this.buffer.readInt16())
-                } break
-
-                case DataTypeOids.Bool: {
-                    rowValues.push(this.buffer.readBool())
-                } break
-
-                case DataTypeOids.Int8: {
-                    const bigint = this.buffer.readInt64()
-                    rowValues.push(int8toBigint ? bigint : Number(bigint))
-                } break
-
-                case DataTypeOids.Float8: {
-                    rowValues.push(this.buffer.readFloat64())
-                } break
-
-                case DataTypeOids.Date: {
-                    rowValues.push(this.buffer.readBinaryDate())
-                } break
-
-                case DataTypeOids.Timestamp:   
-                case DataTypeOids.Timestamptz: {
-                    rowValues.push(this.buffer.readBinaryTimestamp())
-                } break
-
-                case DataTypeOids.Time: {
-                    rowValues.push(this.buffer.readBinaryTime())
-                } break
-
-                case DataTypeOids.Timetz: {
-                    const timeStr = this.buffer.readBinaryTime()
-                    this.buffer.skipBytes(4)
-                    rowValues.push(timeStr)
-                } break
+                case DataTypeOids.Int4:
+                    row[key] = this.buffer.readInt32()
+                    break
 
                 case DataTypeOids.Text:
                 case DataTypeOids.Varchar:
-                case DataTypeOids.Uuid: {
+                case DataTypeOids.Char: {
                     if (fieldLength <= 32) {
                         let cacheForColumn = columnValueCache.get(i)
                         if (!cacheForColumn) {
-                            cacheForColumn = new Map<string, string>()
+                            cacheForColumn = new Map<number, string>()
                             columnValueCache.set(i, cacheForColumn)
                         }
 
-                        const byteKey = this.buffer.readRawBinaryString(fieldLength)
-                        let cachedString = cacheForColumn.get(byteKey)
+                        const byteHash = this.buffer.getBufferHash(fieldLength)
+                        let cachedString = cacheForColumn.get(byteHash)
 
                         if (cachedString === undefined) {
-                            cachedString = Buffer.from(byteKey, 'binary').toString('utf-8')
+                            cachedString = this.buffer.readRawString(fieldLength)
                             if (cacheForColumn.size < 512) {
-                                cacheForColumn.set(byteKey, cachedString)
+                                cacheForColumn.set(byteHash, cachedString)
                             }
+                        } else {
+                            this.buffer.skipBytes(fieldLength)
                         }
-                        rowValues.push(cachedString)
+                        row[key] = cachedString
                     } else {
-                        rowValues.push(this.buffer.readRawString(fieldLength))
+                        row[key] = this.buffer.readRawString(fieldLength)
                     }
                 } break
 
-                default: {
-                    this.buffer.skipBytes(fieldLength)
-                    rowValues.push(undefined)
+                case DataTypeOids.Int2:
+                    row[key] = this.buffer.readInt16()
+                    break
+
+                case DataTypeOids.Bool:
+                    row[key] = this.buffer.readBool()
+                    break
+
+                case DataTypeOids.Int8: {
+                    row[key] = int8toBigint ? this.buffer.readBigInt64() : this.buffer.readInt64()
                 } break
+
+                case DataTypeOids.Float8:
+                    row[key] = this.buffer.readFloat64()
+                    break
+
+                case DataTypeOids.Jsonb:
+                    this.buffer.skipBytes(1)
+                    row[key] = JSON.parse(this.buffer.readRawString(fieldLength - 1))
+                    break
+
+                case DataTypeOids.Json:
+                    row[key] = JSON.parse(this.buffer.readRawString(fieldLength))
+                    break
+
+                case DataTypeOids.Date:
+                    row[key] = this.buffer.readBinaryDate()
+                    break
+
+                case DataTypeOids.Timestamp:   
+                case DataTypeOids.Timestamptz:
+                    row[key] = this.buffer.readBinaryTimestamp()
+                    break
+
+                default:
+                    this.buffer.skipBytes(fieldLength)
+                    row[key] = null
+                    break
             }
         }
 
-        return rowValues
+        return row
     }
 
 

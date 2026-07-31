@@ -16,9 +16,9 @@ export type State = ValueOF<typeof QueryState>
 
 export class Query<T> {
     promise: Promise<T[]>
-    resolve!: (value: T[]) => void
-    reject!: (error: Error) => void
-    rows: any[][] = []
+    private _resolve!: (value: T[]) => void
+    private _reject!: (error: Error) => void
+    private _rows: T[] = []
 
     constructor(
         public text: QueryText,
@@ -28,8 +28,8 @@ export class Query<T> {
         public columns?: ColumnDescription[]
     )  {
         this.promise = new Promise<T[]>((a, b) => {
-            this.resolve = a
-            this.reject = b
+            this._resolve = a
+            this._reject = b
         })
     }
 
@@ -37,31 +37,17 @@ export class Query<T> {
         this.state = state
     }
 
-    toObjects(): T[] {
-        if (!this.rows.length || !this.columns || !this.columns.length) {
-            return [] as T[]
-        }
 
-        const result: T[] = []
-        const rowsLength = this.rows.length
-        const columnsLength = this.columns.length
+    push(value: T) {
+        this._rows.push(value)
+    }
 
-        const colNames = new Array<string>(columnsLength)
-        for (let c = 0; c < columnsLength; c++) {
-            colNames[c] = this.columns[c].name
-        }
+    reject(cause: Error) {
+        this._reject(cause)
+    }
 
-        for (let r = 0; r < rowsLength; r++) {
-            const rawRow = this.rows[r];
-            const rowObject: Record<string, any> = {}
 
-            for (let c = 0; c < columnsLength; c++) {
-                rowObject[colNames[c]] = rawRow[c]
-            }
-
-            result.push(rowObject as T)
-        }
-
-        return result;
+    resolve() {
+        this._resolve(this._rows)
     }
 }

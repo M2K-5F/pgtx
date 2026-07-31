@@ -99,10 +99,13 @@ export class Connection {
     private _isReconnecting = false
     private _socket: SocketConnector
     private _writer: ConnectionRequestWriter
+    private _activeQuery: Query<any> | null = null;
+
 
     private _pipelinesQueue = new Queue<Pipeline>()
 
     private _described = new Map<StatementName, ColumnDescription[]>()
+    private _rowMappers = new Map<StatementName, (values: any) => any>()
     private _describingPending = new Set<StatementName>()
     private _parsed = new Map<QueryText, StatementName>()
     private _parsingPending = new Map<QueryText, StatementName>()
@@ -114,6 +117,20 @@ export class Connection {
 
     private _nextStatement() {
         return `s-${this._stmtCounter++}` as StatementName
+    }
+
+
+    private _getRowMapper(statementName: StatementName, descriptions: ColumnDescription[]) {
+        let mapper = this._rowMappers.get(statementName)
+        if (mapper) return mapper
+
+
+        const fields = descriptions.map((desc, i) => `"${desc.name}": values[${i}]`).join(',\n        ')
+
+        mapper = new Function('values', `return ${fields}`)() as (values: any[]) => any
+        this._rowMappers.set(statementName, mapper)
+
+        return mapper
     }
 
 
@@ -330,7 +347,7 @@ export class Connection {
                 return new Query(
                     text, args, 
                     QueryState.Executing, 
-                    statementName, 
+                    statementName,
                     columns
                 )
             }
@@ -404,7 +421,7 @@ export class Connection {
         if (!this._isFlushing) {
             this._isFlushing = true
             this._pipelinesQueue.push(new Queue<Query<any>>())
-            nextTick(() => {
+            setImmediate(() => {
                 this._flush()                
             })
         }
@@ -547,13 +564,18 @@ export class Connection {
 
 
             case ResponseTypes.DataRow: {
-                const query = this._getCurrentQuery()
+                let query = this._activeQuery
+
+                if (!query) {
+                    query = this._getCurrentQuery()
+                    this._activeQuery = query
+                }
 
                 if (!query.columns) {
                     query.columns = this._described.get(query.statementName)!
                 }
 
-                query.rows.push(reader.readDataRow(query.columns, this.params.int8toBigint))
+                query.push(reader.readDataRow(query.columns, this.params.int8toBigint))
             } break
 
 
@@ -565,7 +587,7 @@ export class Connection {
                     break
                 }
 
-                const query = this._getCurrentQuery()
+                const query = this._activeQuery || this._getCurrentQuery()
                 
                 if (!query) {
                     this.close()
@@ -578,11 +600,11 @@ export class Connection {
 
                 query.state = QueryState.Completed
                 
-                this._pipelinesQueue.get().next()                
+                this._pipelinesQueue.get().next() 
+                
+                this._activeQuery = null                
 
-                query.resolve(
-                    query.toObjects()
-                )
+                query.resolve()
             } break
 
 
