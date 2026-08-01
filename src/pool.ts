@@ -91,8 +91,7 @@ export class Pool {
         this._checkClosed()
 
         while (this._available.hasMore) {
-            const conn = this._available.get()
-            this._available.next()
+            const conn = this._available.shift
 
             if (conn.isOpened) {
                 return Resolve(conn)
@@ -140,10 +139,7 @@ export class Pool {
         }
 
         if (this._waiting.hasMore) {
-            const waiter = this._waiting.get()
-            this._waiting.next()
-
-            waiter.resolve(conn)
+            this._waiting.shift.resolve(conn)
             return
         }
 
@@ -207,8 +203,8 @@ export class Pool {
         this._checkClosed()
 
         while (this._available.hasMore) {
-            const conn = this._available.get()
-            this._available.next()
+            const conn = this._available.shift
+
             if (!conn.isOpened) {
                 this._total--
                 continue
@@ -216,16 +212,6 @@ export class Pool {
 
             this._available.push(conn)
             return conn.query<T>(templates, ...args)
-        }
-        
-        if (this._total < this._max) {
-            this._total++
-            return Future.of(Connection.new(this._config))
-                .tapErr(() => this._total--)
-                .andThen(conn => {
-                    this.release(conn)
-                    return conn.query<T>(templates, ...args)
-                })
         }
 
         return this.acquire()
@@ -282,15 +268,11 @@ export class Pool {
      */
     close() {
         while (this._available.hasMore) {
-            const conn = this._available.get()
-            this._available.next()
-            conn.close()
+            this._available.shift.close()
         }
 
         while (this._waiting.hasMore) {
-            const waiter = this._waiting.get()
-            this._waiting.next()
-            waiter.reject(new Error('Pool closed'))
+            this._waiting.shift.reject(new Error('Pool closed'))
         }
 
         this._total = 0

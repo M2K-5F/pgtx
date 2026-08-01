@@ -1,6 +1,6 @@
 {
   "name": "@m2k-5f/pgtx",
-  "version": "2.3.4",
+  "version": "2.4.1",
   "type": "module",
   "description": "Blazing-fast PostgreSQL driver with pipeline support.",
   "files": [

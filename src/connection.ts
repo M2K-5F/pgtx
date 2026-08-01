@@ -396,7 +396,7 @@ export class Connection {
                 .writeExecute("")
         }
 
-        this._pipelinesQueue.get().push(query)
+        this._pipelinesQueue.last.push(query)
     }
 
 
@@ -481,18 +481,17 @@ export class Connection {
 
 
     private _getCurrentQuery() {
-        return this._pipelinesQueue.get().get()
+        return this._pipelinesQueue.current.current
     }
 
 
     private _rejectPipeline(error: PostgresError) {
         if (this._pipelinesQueue.isFree) return 
 
-        const queue = this._pipelinesQueue.get()
+        const queue = this._pipelinesQueue.current
 
         while (queue.hasMore) {
-            queue.get().reject(error)
-            queue.next()
+            queue.shift.reject(error)
         }
     }
 
@@ -574,7 +573,7 @@ export class Connection {
 
                 query.state = QueryState.Completed
                 
-                this._pipelinesQueue.get().next()
+                this._pipelinesQueue.current.next()
 
                 query.resolve()
             } break
@@ -606,11 +605,8 @@ export class Connection {
 
             case ResponseTypes.ReadyForQuery: {
                 reader.readReadyForQuery()
-                const pipeline = this._pipelinesQueue.get()
 
-                if (!pipeline.hasMore) {
-                    this._pipelinesQueue.next()
-                }
+                this._pipelinesQueue.next()
             } break
 
 

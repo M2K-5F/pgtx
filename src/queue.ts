@@ -16,12 +16,14 @@ export class Queue<T> {
         }
     }
 
-    get() {        
+    get current() {        
         return this._queue[this._pointer]
     }
+    
+    get last() {return  this._queue[this._queue.length -1]}
 
 
-    shift() {
+    get shift() {
         const item = this._queue[this._pointer]
         this.next()
         
