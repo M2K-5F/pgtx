@@ -33,6 +33,7 @@ export class Query<T> {
         })
     }
 
+
     setState(state: State) {
         this.state = state
     }
@@ -42,6 +43,7 @@ export class Query<T> {
         this._rows.push(value)
     }
 
+    
     reject(cause: Error) {
         this._reject(cause)
     }

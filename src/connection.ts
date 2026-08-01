@@ -99,13 +99,10 @@ export class Connection {
     private _isReconnecting = false
     private _socket: SocketConnector
     private _writer: ConnectionRequestWriter
-    private _activeQuery: Query<any> | null = null;
-
 
     private _pipelinesQueue = new Queue<Pipeline>()
 
     private _described = new Map<StatementName, ColumnDescription[]>()
-    private _rowMappers = new Map<StatementName, (values: any) => any>()
     private _describingPending = new Set<StatementName>()
     private _parsed = new Map<QueryText, StatementName>()
     private _parsingPending = new Map<QueryText, StatementName>()
@@ -117,20 +114,6 @@ export class Connection {
 
     private _nextStatement() {
         return `s-${this._stmtCounter++}` as StatementName
-    }
-
-
-    private _getRowMapper(statementName: StatementName, descriptions: ColumnDescription[]) {
-        let mapper = this._rowMappers.get(statementName)
-        if (mapper) return mapper
-
-
-        const fields = descriptions.map((desc, i) => `"${desc.name}": values[${i}]`).join(',\n        ')
-
-        mapper = new Function('values', `return ${fields}`)() as (values: any[]) => any
-        this._rowMappers.set(statementName, mapper)
-
-        return mapper
     }
 
 
@@ -523,7 +506,6 @@ export class Connection {
                 this._parsingPending.delete(query.text)
                 this._parsed.set(query.text, query.statementName)
                 query.state = QueryState.Describing
-
             } break
 
 
@@ -549,6 +531,7 @@ export class Connection {
                 this._describingPending.delete(query.statementName)
                 this._described.set(query.statementName, [])
                 query.state = QueryState.Executing
+                query.columns = []
             } break
 
 
@@ -564,12 +547,7 @@ export class Connection {
 
 
             case ResponseTypes.DataRow: {
-                let query = this._activeQuery
-
-                if (!query) {
-                    query = this._getCurrentQuery()
-                    this._activeQuery = query
-                }
+                let query = this._getCurrentQuery()
 
                 if (!query.columns) {
                     query.columns = this._described.get(query.statementName)!
@@ -587,22 +565,16 @@ export class Connection {
                     break
                 }
 
-                const query = this._activeQuery || this._getCurrentQuery()
+                const query = this._getCurrentQuery()
                 
                 if (!query) {
                     this.close()
                     break
                 }
 
-                if (!query.columns) {
-                    query.columns = this._described.get(query.statementName)!
-                }
-
                 query.state = QueryState.Completed
                 
-                this._pipelinesQueue.get().next() 
-                
-                this._activeQuery = null                
+                this._pipelinesQueue.get().next()
 
                 query.resolve()
             } break

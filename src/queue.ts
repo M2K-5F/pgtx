@@ -4,9 +4,14 @@ export class Queue<T> {
     
     next() {
         this._pointer++
+
+        if (this._pointer > 10000) {
+            this._queue.splice(0, this._pointer)
+            this._pointer = 0
+        }
+
         if (this._pointer >= this._queue.length) {
-            
-            this._queue = []
+            this._queue.length = 0
             this._pointer = 0
         }
     }
@@ -18,12 +23,8 @@ export class Queue<T> {
 
     shift() {
         const item = this._queue[this._pointer]
-        this._pointer++
-        if (this._pointer >= this._queue.length) {
-            
-            this._queue.length = 0
-            this._pointer = 0
-        }
+        this.next()
+        
         return item
     }
 
