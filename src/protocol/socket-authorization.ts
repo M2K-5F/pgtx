@@ -32,10 +32,11 @@ export const createAuthorizedSocket = (writer: ConnectionRequestWriter, params: 
             const socket = createConnection({host: params.host, port: params.port})
 
             const connector = new SocketConnector(socket, 
-                (type, reader) => {
+                (type, length, reader) => {
                     writer.clear()
                     switch (type) {
                         case ResponseTypes.Authentication: {
+
                             switch (reader.readAuthentication()) {
                                 case AuthenticationCodes.Ok: break
 
@@ -65,7 +66,7 @@ export const createAuthorizedSocket = (writer: ConnectionRequestWriter, params: 
                                 }
 
                                 case AuthenticationCodes.SASLContinue: {
-                                    serverMessage = reader.readSaslMessage()
+                                    serverMessage = reader.readSaslMessage(length)
 
                                     if (!params.password) throw ErrPasswordRequired
 
@@ -93,7 +94,7 @@ export const createAuthorizedSocket = (writer: ConnectionRequestWriter, params: 
                                 }
 
                                 case AuthenticationCodes.SASLFinal: {
-                                    reader.readSaslMessage()
+                                    reader.readSaslMessage(length)
                                     break
                                 } 
                             } 

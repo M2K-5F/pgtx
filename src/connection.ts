@@ -131,7 +131,7 @@ export class Connection {
         this.params = params
         this._logLevel = logLevel
         this._socket = new SocketConnector(socket, 
-            (type, reader) => this._handlePacket(type, reader),
+            (type, _, reader) => this._handlePacket(type, reader),
             (err) => this._registerReconnect()
         )
         this._writer = writer
@@ -457,7 +457,7 @@ export class Connection {
 
         const connector = new SocketConnector(
             socket, 
-            (type, reader) => this._handlePacket(type, reader),
+            (type, _ ,reader) => this._handlePacket(type, reader),
             (err) => this._registerReconnect()
         )
 

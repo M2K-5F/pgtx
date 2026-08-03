@@ -9,7 +9,7 @@ export class SocketConnector {
 
     constructor(
         private _socket: Socket,
-        private _onData: (type: ResponseType, reader: ConnectionResponseReader) => void,
+        private _onData: (type: ResponseType, length: number, reader: ConnectionResponseReader) => void,
         private _onError: (error: Error) => void
     ) {
         _socket.setKeepAlive(true, 10000)
@@ -28,7 +28,8 @@ export class SocketConnector {
                     return
                 }
 
-                this._onData(reader.readType(), reader)
+                const {type, length} = reader.readType()
+                this._onData(type, length, reader)
             }
         })
         _socket.on('error', error => {

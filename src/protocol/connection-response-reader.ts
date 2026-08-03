@@ -180,13 +180,11 @@ export class ConnectionResponseReader {
 
 
     readType() {
-        return this.buffer.readChar() as ResponseType
+        return {type: this.buffer.readChar() as ResponseType, length: this.buffer.readInt32()}
     }
 
 
     readAuthentication() {
-        this.currentPacketLength = this.buffer.readInt32()
-
         return this.buffer.readInt32() as AuthenticationCode
     }
 
@@ -197,8 +195,6 @@ export class ConnectionResponseReader {
 
 
     readParameterStatus() {
-        this.buffer.readInt32()
-
         return {
             name: this.buffer.readCString(), 
             value: this.buffer.readCString()
@@ -207,8 +203,6 @@ export class ConnectionResponseReader {
 
 
     readBackendKeyData() {
-        this.buffer.readInt32()
-
         return {
             PID: this.buffer.readInt32(), 
             secret: this.buffer.readInt32()
@@ -216,9 +210,7 @@ export class ConnectionResponseReader {
     }
 
 
-    readErrorResponse(): PostgresError {
-        this.buffer.readInt32()
-            
+    readErrorResponse(): PostgresError {            
         let severity = ''
         let code = ''
         let message = ''
@@ -263,7 +255,6 @@ export class ConnectionResponseReader {
 
 
     readReadyForQuery() {
-        this.buffer.readInt32()
         return this.buffer.readChar() as TransactionStatus
     }
 
@@ -281,15 +272,12 @@ export class ConnectionResponseReader {
     }
 
 
-    readSaslMessage(): string {
-        const dataLength = this.currentPacketLength - 4 - 4
-        
-        return this.buffer.readRawString(dataLength)
+    readSaslMessage(length: number): string {
+        return this.buffer.readRawString(length - 4 - 4)
     }
 
 
     readRowDescription() {
-        this.buffer.skipBytes(4)
         const columnsCount = this.buffer.readInt16()
         const columns = new Array<ColumnDescription>(columnsCount)
 
@@ -312,7 +300,6 @@ export class ConnectionResponseReader {
 
 
     readDataRow(descriptions: ColumnDescription[], int8toBigint: boolean = false): Record<string, any> {
-        this.buffer.skipBytes(4)
         const fieldsCount = this.buffer.readInt16()
         const row: Record<string, any> = {}
 
@@ -407,7 +394,6 @@ export class ConnectionResponseReader {
 
     readNotificationResponse() {
         this.buffer.readInt32()
-        this.buffer.readInt32()
         const name = this.buffer.readCString() as ChannelName
         const payload = this.buffer.readCString()
         
@@ -416,7 +402,6 @@ export class ConnectionResponseReader {
 
 
     readCommandComplete(): string {
-        this.buffer.readInt32()
         return this.buffer.readCString()
     }
 
@@ -436,25 +421,18 @@ export class ConnectionResponseReader {
     }
 
 
-    readParseComplete() {
-        this.buffer.readInt32()
-    }
+    readParseComplete() {}
 
 
-    readBindComplete() {
-        this.buffer.readInt32()
-    }
+    readBindComplete() {}
 
 
     readParameterDescription() {
-        this.buffer.readInt32()
         const count = this.buffer.readInt16()
         for (let i = 0; i < count; i++) {
             this.buffer.readInt32()
         }
     }
 
-    readNoData() {
-        this.buffer.readInt32()
-    }
+    readNoData() {}
 }
