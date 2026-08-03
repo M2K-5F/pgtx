@@ -136,6 +136,11 @@ jobs:
           wrk -t2 -c200 -d10s --latency http://localhost:3001/users
           sleep 2
 
+
+          echo "BENCHMARKING Postgres.js (50 conns)"
+          wrk -t2 -c50 -d10s --latency http://localhost:3001/users
+          sleep 2
+
           
           kill -9 $SERVER_PID
           sleep 2
@@ -158,4 +163,9 @@ jobs:
           wrk -t2 -c200 -d10s --latency http://localhost:3000/users
           sleep 2
           
+          echo "BENCHMARKING @m2k-5f/pgtx (50 conns)"
+          wrk -t2 -c50 -d10s --latency http://localhost:3000/users
+          sleep 2
+
+
           kill -9 $SERVER_PID 2>/dev/null || true
