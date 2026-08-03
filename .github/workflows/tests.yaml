@@ -117,22 +117,45 @@ jobs:
           PGDATABASE: pgtx_test
           PGMAX: 10
         run: |
+
+          npx tsx server-postgresjs.ts &
+          SERVER_PID=$!
+          sleep 3
+
+          echo "BENCHMARKING Postgres.js (10000 conns)"
+          wrk -t2 -c10000 -d10s --latency http://localhost:3001/users
+          sleep 3
+
+          
+          echo "BENCHMARKING Postgres.js (1000 conns)"
+          wrk -t2 -c1000 -d10s --latency http://localhost:3001/users
+          sleep 3
+
+          
+          echo "BENCHMARKING Postgres.js (200 conns)"
+          wrk -t2 -c200 -d10s --latency http://localhost:3001/users
+          sleep 2
+
+          
+          kill -9 $SERVER_PID
+          sleep 2
           
           npx tsx server-pgtx.ts &
           SERVER_PID=$!
           sleep 3 
           
-          echo "BENCHMARKING @m2k-5f/pgtx (10 conns)"
-          wrk -t2 -c1000 -d10s --latency http://localhost:3000/users
-          
-          kill -9 $SERVER_PID
-          sleep 2
-
-          npx tsx server-postgresjs.ts &
-          SERVER_PID=$!
+          echo "BENCHMARKING @m2k-5f/pgtx (10000 conns)"
+          wrk -t2 -c10000 -d10s --latency http://localhost:3000/users
           sleep 3
+
           
-          echo "BENCHMARKING POSTGRES.JS"
-          wrk -t2 -c1000 -d10s --latency http://localhost:3001/users
+          echo "BENCHMARKING @m2k-5f/pgtx (1000 conns)"
+          wrk -t2 -c1000 -d10s --latency http://localhost:3000/users
+          sleep 3
+
+          
+          echo "BENCHMARKING @m2k-5f/pgtx (200 conns)"
+          wrk -t2 -c200 -d10s --latency http://localhost:3000/users
+          sleep 2
           
           kill -9 $SERVER_PID 2>/dev/null || true
