@@ -179,6 +179,9 @@ In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memo
   > 🚀 Pgtx automatically groups concurrent queries into pipeline batches, reducing network overhead by up to 5x compared to sequential queries.
 
 
+  ---
+
+
   ### High-Performance Data Streaming (`pool.stream`)
 
   For heavy database lookups (exporting millions of rows, bulk reports, or large analytical dumps), memory accumulation is the ultimate killer of backend stability. Storing rows in a standard JavaScript array causes massive heap pollution and triggers blocking Garbage Collection spikes.
@@ -232,6 +235,7 @@ In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memo
   };
   ```
 
+  ---
 
   ### Transactions & Savepoints
 
@@ -247,6 +251,7 @@ In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memo
   })
   ```
 
+  ---
 
   ### Async Notifications (LISTEN / NOTIFY)
 
@@ -300,6 +305,7 @@ In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memo
 
   > ⚠️ **Architecture Note:** While `pool.notify` is a fire-and-forget atomic command, subscription states (`LISTEN`/`UNLISTEN`) are strictly tied to specific PostgreSQL backend processes. Using the high-level `pool.listen()` is strongly recommended for application code, as it encapsulates socket management into an elegant, leak-proof callback boundary.
 
+  ---
 
   ### Bulk Inserts
 
@@ -315,6 +321,8 @@ In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memo
   // INSERT INTO users (name, email) VALUES ($1, $2), ($3, $4)
   ```
 
+  ---
+
   ### Dynamic Updates
 
   ```typescript
@@ -325,6 +333,8 @@ In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memo
   `
   // UPDATE users SET status = $1, last_login = $2 WHERE id = $3
   ```
+
+  ---
 
   ### Recursive Fragments
 
@@ -337,6 +347,8 @@ In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memo
     WHERE ${filter} AND role_id = (${subquery})
   `
   ```
+
+  ---
 
   ### Smart Lists
 
@@ -356,6 +368,8 @@ In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memo
   `
   ```
 
+  ---
+
   ### Clean WHERE Clauses
 
   ```typescript
@@ -365,6 +379,8 @@ In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memo
   `
   // SELECT * FROM users WHERE role = $1 AND active = $2
   ```
+
+  ---
 
   ### Conditional Logic
 
