@@ -16,15 +16,24 @@ const server = createServer(async (req, res) => {
 
     const [user] = await sql`
       SELECT id, name, balance FROM bench_users WHERE id = ${targetId}
-    `;
+    `
+    .catch((err) => {
+      return [null]
+    })
 
-    res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify(user));
-    return;
+    if (!user) {
+      res.writeHead(504, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Timeout' }))
+      return
+    }
+
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(user))
+    return
   }
 
-  res.writeHead(404);
-  res.end();
+  res.writeHead(404)
+  res.end()
 });
 
 server.listen(3001, () => {
