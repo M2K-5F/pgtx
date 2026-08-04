@@ -179,7 +179,7 @@ export class Connection {
         const query = this._createQuery<T>(text, args)
 
         this._writeQuery(query)
-    
+        query.startTimeout(this.params.queryTimeout || 30000)
         return query.future
     }
 
@@ -343,7 +343,7 @@ export class Connection {
         const query = this._createStream<T>(text, args, controller)
 
         this._writeQuery(query)
-    
+        query.startTimeout(this.params.queryTimeout || 30000)
         return stream
     }
     
@@ -361,7 +361,8 @@ export class Connection {
         const query = this._createStream<T>(text, args, controller)
 
         this._writeQuery(query)
-
+        query.startTimeout(this.params.queryTimeout || 30000)
+        
         return query
     }
     
@@ -376,7 +377,6 @@ export class Connection {
                     text, args, 
                     QueryState.Executing, 
                     statementName,
-                    this.params.queryTimeout || 10000,
                     columns
                 )
             }
@@ -386,7 +386,6 @@ export class Connection {
                         text, args, 
                         QueryState.Executing,
                         statementName,
-                        this.params.queryTimeout || 10000   
                     )
                 }
                 else {
@@ -396,7 +395,6 @@ export class Connection {
                         text, args,
                         QueryState.Describing,
                         statementName,
-                        this.params.queryTimeout || 10000
                     )
                 }
             }
@@ -409,7 +407,6 @@ export class Connection {
                     text, args,
                     QueryState.Describing,
                     statementName,
-                    this.params.queryTimeout || 10000
                 )
             }
             else {
@@ -419,7 +416,6 @@ export class Connection {
                     text, args,
                     QueryState.Parsing,
                     statementName,
-                    this.params.queryTimeout || 10000
                 )
             }
         }
@@ -436,7 +432,6 @@ export class Connection {
                     text, args, 
                     QueryState.Executing, 
                     statementName,
-                    this.params.queryTimeout || 10000,
                     controller,
                     columns
                 )
@@ -447,7 +442,6 @@ export class Connection {
                         text, args, 
                         QueryState.Executing,
                         statementName,
-                        this.params.queryTimeout || 10000,
                         controller
                     )
                 }
@@ -458,7 +452,6 @@ export class Connection {
                         text, args,
                         QueryState.Describing,
                         statementName,
-                        this.params.queryTimeout || 10000,
                         controller
                     )
                 }
@@ -472,7 +465,6 @@ export class Connection {
                     text, args,
                     QueryState.Describing,
                     statementName,
-                    this.params.queryTimeout || 10000,
                     controller
                 )
             }
@@ -483,7 +475,6 @@ export class Connection {
                     text, args,
                     QueryState.Parsing,
                     statementName,
-                    this.params.queryTimeout || 10000,
                     controller
                 )
             }

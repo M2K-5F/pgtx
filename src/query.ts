@@ -29,15 +29,18 @@ export class Query<T> {
         public args: (string | null)[],
         public state: State,
         public statementName: StatementName,
-        timeout: number,
         public columns?: ColumnDescription[]
     )  {
         const {future, reject, resolve} = Future.withResolvers<T[], PostgresError>()
         this.future = future
         this._resolve = resolve
         this._reject = reject
+    }
 
-        this._timer = setTimeout(() => reject(new PostgresError('Query timeout', '57014')), timeout)
+    startTimeout(timeout: number) {
+        this._timer = setTimeout(() => {
+            this.reject(new PostgresError('Query timeout', '57014'))
+        }, timeout)
     }
 
 
@@ -65,7 +68,6 @@ export class Query<T> {
 
 export class StreamQuery<T> {
     
-    
     private _timer?: NodeJS.Timeout 
 
     constructor(
@@ -73,18 +75,18 @@ export class StreamQuery<T> {
         public args: (string | null)[],
         public state: State,
         public statementName: StatementName,
-        timeout: number,
         private _controller: ReadableStreamDefaultController<T>,
         public columns?: ColumnDescription[]
-    ) {
-
-        this._timer = setTimeout(() => {
-            this.reject(new PostgresError('Query timeout', '57014'))
-        }, timeout)
-    }
+    ) {}
 
     setState(state: State) {
         this.state = state
+    }
+
+    startTimeout(timeout: number) {
+        this._timer = setTimeout(() => {
+            this.reject(new PostgresError('Query timeout', '57014'))
+        }, timeout)
     }
 
     push(value: T) {

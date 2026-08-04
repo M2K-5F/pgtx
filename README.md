@@ -454,7 +454,7 @@ In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memo
       host: string
       port: number
       database: string
-      queryTimeout?: number // default: 10 srconds
+      queryTimeout?: number // default: 30 srconds
       logLevel?: 'none' | 'error' | 'notice' | 'query' // default: "error"
   }
   ```
