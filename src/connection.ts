@@ -9,10 +9,11 @@ import { Branded, ColumnDescription } from "./types"
 import { Transaction } from "./transaction"
 import { SocketConnector } from "./protocol/socket-connector"
 import { Queue } from "./queue"
-import { Query, QueryState } from "./query"
+import { Query, QueryState, StreamQuery } from "./query"
 import { sql } from "."
 import {Begin, Future, Resolve} from 'fluent-future'
 import { PostgresError } from "./error"
+import { ReadableStreamDefaultController } from "stream/web"
 
 type LogLevel = "none" | "error" | "notice" | "query"
 
@@ -23,37 +24,15 @@ export type ConnectionParams = {
     port: number
     database: string
     logLevel?: LogLevel,
-    int8toBigint?: boolean
+    int8toBigint?: boolean,
+    queryTimeout?: number
 }
 
 const ErrConnectionClosed = new PostgresError("Connection is closed", 'connection_closed', "", "ERROR")
 const ErrConnectionReconnecring = new PostgresError("Connection are reconnecting", "connection_reconnecting", "", "ERROR")
 
 
-export type ExecuteQueueUnit = {
-    rows: (string | null)[][]
-    resolve: (value: any) => void
-    reject: (err: Error) => void
-    statementName: StatementName
-}
-
-
-export type ParsingQueueUnit = {
-    resolve: (statementName: StatementName) => void
-    reject: (error: Error) => void
-    text: QueryText
-    statementName: StatementName
-}
-
-
-export type DescribeQueueUnit = {
-    resolve: (value: ColumnDescription[]) => void
-    reject: (error: Error) => void
-    statementName: StatementName
-}
-
-
-type Pipeline = Queue<Query<any>>
+type Pipeline = Queue<Query<any> | StreamQuery<any>>
 
 export type StatementName = Branded<string, 'StatementName'>
 
@@ -201,11 +180,7 @@ export class Connection {
 
         this._writeQuery(query)
     
-        return Future.of(query.promise, error => {
-            if (error instanceof PostgresError) return error
-
-            return new PostgresError(error.message)
-        })
+        return query.future
     }
 
 
@@ -319,36 +294,109 @@ export class Connection {
         
         return Resolve([])
     }
+
+
+    /**
+     * Executes an SQL query in streaming mode.
+     * 
+     * Data is streamed directly from the PostgreSQL binary network buffer into the Web Streams API 
+     * (`ReadableStream`), bypassing any intermediate array allocation or row accumulation in the JS heap.
+     * This pattern provides a true Zero-Memory Footprint and is ideal for exporting massive tables 
+     * or piping database payloads directly into HTTP responses (e.g., via `Bun.serve` or fetch `Response`).
+     *
+     * @template T The expected shape of a single row interface.
+     * @param {TemplateStringsArray} templates The SQL string parts from the tagged template literal.
+     * @param {...any} args The parameterized query arguments.
+     * @returns {ReadableStream<T>} Synchronously returns a native Web ReadableStream instance.
+     * 
+     * @example
+     * // Streaming a giant table directly to an HTTP response (Bun.serve)
+     * const userStream = conn.stream<User>`SELECT id, name FROM users`;
+     * return new Response(userStream, { headers: { 'Content-Type': 'application/json' } });
+     * 
+     * @example
+     * // Asynchronously iterating over rows as they arrive from the wire socket
+     * const stream = conn.stream<User>`SELECT * FROM orders WHERE status = ${'processed'}`;
+     * for await (const row of stream) {
+     *     console.log(row.id, row.amount); // Row object is eligible for GC immediately after iteration
+     * }
+     */
+    stream<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]) {
+        this._checkOpened()
+        this._registerFlush()
+
+        const {text, args} = compileSqlTemplate({templates, args: params}) as {text: QueryText, args: (string | null)[]}
+        
+        if (this._logLevel === 'query') {
+            console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
+        }
+
+        let controller!: ReadableStreamDefaultController<T>
+
+        const stream = new ReadableStream<T>({
+            start: c => {
+                controller = c
+            }
+        })
+        
+
+        const query = this._createStream<T>(text, args, controller)
+
+        this._writeQuery(query)
+    
+        return stream
+    }
+    
+
+    private _streamWithController<T extends Record<string, any>>(templates: TemplateStringsArray, params: any[], controller: ReadableStreamDefaultController<T>) {
+        this._checkOpened()
+        this._registerFlush()
+
+        const {text, args} = compileSqlTemplate({templates, args: params}) as {text: QueryText, args: (string | null)[]}
+        
+        if (this._logLevel === 'query') {
+            console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
+        }
+        
+        const query = this._createStream<T>(text, args, controller)
+
+        this._writeQuery(query)
+
+        return query
+    }
     
     
-    private _createQuery<T>(text: QueryText, args: (string | null)[]): Query<T> {
+    private _createQuery<T>(text: QueryText, args: (string | null)[]) {
         if (this._parsed.has(text)) {
             const statementName = this._parsed.get(text)!
 
             if (this._described.has(statementName)) {
                 const columns = this._described.get(statementName)
-                return new Query(
+                return new Query<T>(
                     text, args, 
                     QueryState.Executing, 
                     statementName,
+                    this.params.queryTimeout || 10000,
                     columns
                 )
             }
             else {
                 if (this._describingPending.has(statementName)) {
-                    return new Query(
+                    return new Query<T>(
                         text, args, 
                         QueryState.Executing,
-                        statementName
+                        statementName,
+                        this.params.queryTimeout || 10000   
                     )
                 }
                 else {
                     this._describingPending.add(statementName)
 
-                    return new Query(
+                    return new Query<T>(
                         text, args,
                         QueryState.Describing,
-                        statementName
+                        statementName,
+                        this.params.queryTimeout || 10000
                     )
                 }
             }
@@ -357,26 +405,93 @@ export class Connection {
         else {
             if (this._parsingPending.has(text)) {
                 const statementName = this._parsingPending.get(text)!
-                return new Query(
+                return new Query<T>(
                     text, args,
                     QueryState.Describing,
-                    statementName
+                    statementName,
+                    this.params.queryTimeout || 10000
                 )
             }
             else {
                 const statementName = this._nextStatement()
                 this._parsingPending.set(text, statementName)
-                return new Query(
+                return new Query<T>(
                     text, args,
                     QueryState.Parsing,
-                    statementName
+                    statementName,
+                    this.params.queryTimeout || 10000
                 )
             }
         }
     }
 
 
-    private _writeQuery(query: Query<any>) {        
+    private _createStream<T>(text: QueryText, args: (string | null)[], controller: ReadableStreamDefaultController<T>) {
+        if (this._parsed.has(text)) {
+            const statementName = this._parsed.get(text)!
+
+            if (this._described.has(statementName)) {
+                const columns = this._described.get(statementName)
+                return new StreamQuery<T>(
+                    text, args, 
+                    QueryState.Executing, 
+                    statementName,
+                    this.params.queryTimeout || 10000,
+                    controller,
+                    columns
+                )
+            }
+            else {
+                if (this._describingPending.has(statementName)) {
+                    return new StreamQuery<T>(
+                        text, args, 
+                        QueryState.Executing,
+                        statementName,
+                        this.params.queryTimeout || 10000,
+                        controller
+                    )
+                }
+                else {
+                    this._describingPending.add(statementName)
+
+                    return new StreamQuery<T>(
+                        text, args,
+                        QueryState.Describing,
+                        statementName,
+                        this.params.queryTimeout || 10000,
+                        controller
+                    )
+                }
+            }
+        }
+
+        else {
+            if (this._parsingPending.has(text)) {
+                const statementName = this._parsingPending.get(text)!
+                return new StreamQuery<T>(
+                    text, args,
+                    QueryState.Describing,
+                    statementName,
+                    this.params.queryTimeout || 10000,
+                    controller
+                )
+            }
+            else {
+                const statementName = this._nextStatement()
+                this._parsingPending.set(text, statementName)
+                return new StreamQuery<T>(
+                    text, args,
+                    QueryState.Parsing,
+                    statementName,
+                    this.params.queryTimeout || 10000,
+                    controller
+                )
+            }
+        }
+    }
+
+
+    private _writeQuery(query: Query<any> | StreamQuery<any>) {        
         if (query.state === QueryState.Parsing) {
             this._writer
                 .writeParse(query.statementName, query.text)

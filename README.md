@@ -55,6 +55,7 @@
 
   - **Pipeline queries** — Automatic query multiplexing over PostgreSQL pipeline protocol
   - **Tagged templates** — Natural SQL with type safety
+  - **Native Web Streams API** — Memory-efficient data streaming via `pool.stream()`
   - **Transactions & Savepoints** — Nested transactions with rollback
   - **Bulk inserts** — Auto-extract columns from objects
   - **Dynamic updates** — Generate SET clauses from objects
@@ -63,42 +64,64 @@
   - **Connection pool** — Auto-management connections with support for pipeline queries via the pool itself.
   - **Zero dependencies** — Lightweight and blazing
 
-  ---
+---
 
-  ## ⚡ Performance & Benchmarks
+## ⚡ Performance
 
-  ### 1. In-Engine Pipeline Blast (3000 Parallel Queries)
-  *Measured using `mitata` inside GitHub Actions cloud runners (Ubuntu, 2 vCPUs, 10 DB Connections).*
+All benchmarks are executed on **GitHub Actions** (Ubuntu, 2 vCPUs) and are fully reproducible. Benchmark sources are included in this repository.
 
-  | Driver | Avg Time per Iteration | Relative Speed | Memory (p75) |
-  | :--- | :---: | :---: | :---: |
-  | **Pgtx (Pipeline)** | **19.21 ms** | **Baseline (3.6×)** | **874.71 KB** |
-  | Postgres.js (Pipeline) | 70.50 ms | 3.6× Slower | 1.29 MB |
-  | node-postgres (no pipeline) | 327.07 ms | 17.0× Slower | 4.05 MB |
+### 1. PostgreSQL Pipeline Stress Test
 
-  > **Stability Note:** Pgtx provides an rock-solid flat latency graph (p99 is strictly bounded to `21.76 ms`), while maintaining a 2.5× smaller memory footprint compared to Postgres.js due to zero-allocation binary parsing.
+**3000 concurrent parameterized `SELECT` queries**
 
-  ### 2. Real-World HTTP Throughput (`wrk` Stress Test)
-  *HTTP server baseline using a `node:http` instance on GitHub Actions runner, handling 1,000 concurrent network connections (`wrk -t2 -c1000 -d10s`).*
+* Connection pool: **10 connections**
+* Measured with **mitata**
 
-  - **Pgtx:**  **~14,500 RPS**
-  - **Postgres.js:**  **~11,500 RPS**
+| Driver                 |     Avg Time |       Relative Speed | Memory (p75) |
+| :--------------------- | -----------: | -------------------: | -----------: |
+| **Pgtx (Pipeline)**    | **24.18 ms** | **Baseline (1.00×)** |  **≈2.5 MB** |
+| Postgres.js (Pipeline) |     83.36 ms |     **3.45× slower** |      ≈7.6 MB |
+| node-postgres (`pg`)   |    377.95 ms |    **15.63× slower** |     ≈11.4 MB |
 
-  On high-concurrency bare metal servers, Pgtx effortlessly maintains a **+25% performance lead** over Postgres.js.
+### 2. Real-World HTTP Throughput
 
-  Pgtx achieves high throughput by:
+Simple `node:http` server serving a PostgreSQL-backed endpoint.
 
-  * Pipeline query multiplexing
-  * Synchronous protocol encoding
-  * Batched socket writes
-  * Automatic prepared statement caching
-  * Row description caching
-  * Zero-dependency implementation
-  * Binary protocol support
+Measured with:
 
-  > Benchmarks source is available in the repository and can be reproduced locally.
+```bash
+wrk -t2 -c<N> -d10s http://localhost:3000/users
+```
 
-  ---
+| Concurrent Connections |             Pgtx |  Postgres.js |   Speedup |
+| ---------------------: | ---------------: | -----------: | --------: |
+|                     50 |      5,272 req/s |  5,691 req/s |     0.93× |
+|                    200 | **12,918 req/s** |  6,724 req/s | **1.92×** |
+|                   1000 | **21,429 req/s** |  8,423 req/s | **2.54×** |
+|                  10000 | **22,486 req/s** | 12,764 req/s | **1.76×** |
+
+### Why is Pgtx fast?
+
+Pgtx is engineered for **throughput**, not for minimizing the latency of individual queries.
+
+Instead of optimizing a single request in isolation, Pgtx minimizes per-query overhead under sustained concurrent load by combining:
+
+* Pipeline query multiplexing
+* Synchronous PostgreSQL wire protocol encoding
+* Batched socket writes
+* Automatic prepared statement caching
+* Prepared statement deduplication
+* Row description caching
+* Binary protocol support
+* Zero-dependency implementation
+
+As concurrency increases, these optimizations significantly reduce protocol overhead, allowing Pgtx to scale more efficiently than traditional PostgreSQL drivers.
+
+In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memory usage** than Postgres.js while processing the same workload, reducing allocation pressure and improving sustained throughput under heavy load.
+
+> **Blazing** isn't just a tagline — it's backed by reproducible benchmarks.
+
+---
 
   ## 🔥 Why Pgtx?
 
@@ -156,6 +179,60 @@
   > 🚀 Pgtx automatically groups concurrent queries into pipeline batches, reducing network overhead by up to 5x compared to sequential queries.
 
 
+  ### High-Performance Data Streaming (`pool.stream`)
+
+  For heavy database lookups (exporting millions of rows, bulk reports, or large analytical dumps), memory accumulation is the ultimate killer of backend stability. Storing rows in a standard JavaScript array causes massive heap pollution and triggers blocking Garbage Collection spikes.
+
+  Pgtx solves this at the protocol level by introducing `pool.stream()`, which bypasses row aggregation entirely and pipes rows transitively directly into a native Web **`ReadableStream`**.
+
+  #### 1. Ultra-Low Memory Row Iteration
+  You can consume database rows sequentially using standard `for await...of` syntax. Rows are processed and evicted from memory the moment they arrive from the network socket buffer.
+
+  ```typescript
+  interface HeavyLog { id: number; data: string; timestamp: Date; }
+
+  const logStream = pool.stream<HeavyLog>`
+    SELECT id, data, timestamp FROM application_logs WHERE level = ${'error'}
+  `;
+
+  for await (const log of logStream) {
+    // Each log object is parsed on-the-fly and processed instantly.
+    // Zero rows are accumulated in the internal driver state!
+    console.log(`[${log.timestamp.toISOString()}] ${log.data}`);
+  }
+  ```
+
+  #### 2. Streaming Directly to HTTP Responses (`Bun.serve`)
+  Since Pgtx implements the standardized Web Streams API, you can bridge your database query directly into an HTTP response body with absolutely zero intermediate buffers.
+
+  ```typescript
+  import { Pool } from "@m2k-5f/pgtx";
+
+  const pool = new Pool({ /* ... config ... */ });
+
+  export default {
+    port: 3000,
+    async fetch(request) {
+      const url = new URL(request.url);
+
+      if (url.pathname === "/export/users") {
+        // Synchronously returns a stream handle even if pool sockets are currently busy
+        const userStream = pool.stream`SELECT id, email, profile_metadata FROM giant_user_table`;
+
+        return new Response(userStream, {
+          headers: {
+            "Content-Type": "application/json",
+            "Transfer-Encoding": "chunked",
+          },
+        });
+      }
+
+      return new Response("Not Found", { status: 404 });
+    },
+  };
+  ```
+
+
   ### Transactions & Savepoints
 
   ```typescript
@@ -173,13 +250,36 @@
 
   ### Async Notifications (LISTEN / NOTIFY)
 
-  Pgtx natively handles PostgreSQL `LISTEN/NOTIFY` protocol messages asynchronously without interrupting multiplexed query pipeline.
+  Pgtx natively handles PostgreSQL `LISTEN/NOTIFY` protocol messages asynchronously without interrupting the multiplexed query pipeline. It offers two distinct ways to subscribe: high-level pool-driven subscriptions and low-level connection pinning.
+
+  #### 1. Sending a Notification
+  Notifications are atomic and can be triggered directly from the `Pool` utilizing any available socket:
+  ```typescript
+  await pool.notify('user_events', JSON.stringify({ id: 42, action: 'signup' }))
+  ```
+
+  #### 2. High-Level Pool Subscription (Recommended)
+  You can subscribe directly via the `Pool` instance. Pgtx will automatically borrow a dedicated connection from the pool, issue the `LISTEN` command, and seamlessly manage its lifecycle. 
+
+  The method returns a lazy, async **unsubscribe function** that cleanly handles `UNLISTEN` and returns the connection to the pool when invoked.
 
   ```typescript
-  // 1. Sending a notification
-  await pool.notify('user_events', JSON.stringify({ id: 42, action: 'signup' }))
+  const onEvent = (payload: string) => {
+    console.log(`Received payload: ${payload}`)
+  }
 
-  // 2. Receiving notifications (Requires a dedicated connection from the pool)
+  // Automatically borrows a connection and sets up the listener
+  const unsubscribe = await pool.listen('user_events', onEvent)
+
+  // When the subscription is no longer needed (e.g., server shutdown):
+  // It automatically sends UNLISTEN and releases the connection back to the pool!
+  await unsubscribe()
+  ```
+
+  #### 3. Low-Level Connection Subscription (Stateful)
+  If you need complete control over a specific PostgreSQL backend process, you can acquire an explicit `Connection` instance. This allows you to multiplex multiple callbacks onto a single channel seamlessly.
+
+  ```typescript
   const conn = await pool.acquire()
 
   const onEvent = (payload: string) => {
@@ -190,14 +290,15 @@
   await conn.listen('user_events', onEvent)
   await conn.listen('user_events', (data) => logToFile(data))
 
-  // Clean up callbacks (Sends UNLISTEN only when the channel has zero callbacks left)
+  // Cleans up callbacks (Sends UNLISTEN only when the channel has zero callbacks left)
   await conn.unlisten('user_events', onEvent)
 
-  // Keep the connection active as long as you need notifications!
-  // Do NOT release it back to the pool prematurely.
+  // ⚠️ Manual lifecycle management is strictly required for this pattern!
+  // Do NOT release it back to the pool until you are completely done listening.
+  this.release(conn)
   ```
 
-  > ⚠️ **Architecture Note:** While `notify` is atomic and can be triggered directly from the `Pool` on any random socket, `listen` and `unlisten` are stateful commands tied to a specific PostgreSQL backend process. Therefore, subscription methods are **strictly available only on explicit `Connection` instances** fetched via `pool.acquire()`.
+  > ⚠️ **Architecture Note:** While `pool.notify` is a fire-and-forget atomic command, subscription states (`LISTEN`/`UNLISTEN`) are strictly tied to specific PostgreSQL backend processes. Using the high-level `pool.listen()` is strongly recommended for application code, as it encapsulates socket management into an elegant, leak-proof callback boundary.
 
 
   ### Bulk Inserts
@@ -342,7 +443,7 @@
       notify(channelName: string, payload?: string): Future<[], PostgresError>
       listen(channelName: string, callback: (payload: string) => void): Future<[], PostgresError>
       unlisten(channelName: string, callback: (payload: string) => void): Future<[], PostgresError>
-
+      stream<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]): ReadableStream<T>
       get isAlive(): boolean
       close(): void
   }
@@ -353,7 +454,8 @@
       host: string
       port: number
       database: string
-      logLevel?: 'none' | 'error' | 'notice' | 'query' // defaul: "error"
+      queryTimeout?: number // default: 10 srconds
+      logLevel?: 'none' | 'error' | 'notice' | 'query' // default: "error"
   }
   ```
 
@@ -363,10 +465,13 @@
   class Pool {
       constructor(config: PoolConfig)
 
-      query<T>(strings: TemplateStringsArray, ...values: any[]): Future<T[], Error>
+      query<T>(strings: TemplateStringsArray, ...values: any[]): Future<T[], PostgresError>
       begin<T>(callback: (tx: Transaction) => Promise<T>): Future<T, Error>
       notify(channelName: string, payload?: string): Future<[], PostgresError>
-      acquire(): Future<Connection, Error>
+      listen(channel: string, callback: (payload: string) => void): Future<() => Promise<void>, PostgresError>
+      stream<T extends Record<string, any>>(templates: TemplateStringsArray, ...args: any[]): ReadableStream<T>
+      withAcquire<T>(fn: (conn: Connection) => Promise<T>): Future<T, Error>
+      acquire(): Future<Connection, PostgresError>
       release(conn: Connection): void
       close(): void
 

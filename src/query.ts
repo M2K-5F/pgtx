@@ -1,5 +1,7 @@
+import { Future } from "fluent-future";
 import { QueryText, StatementName } from "./connection";
 import { ColumnDescription, ValueOF } from "./types";
+import { PostgresError } from "./error";
 
 
 export const QueryState = {
@@ -15,22 +17,27 @@ export type State = ValueOF<typeof QueryState>
 
 
 export class Query<T> {
-    promise: Promise<T[]>
+    future: Future<T[], PostgresError>
     private _resolve!: (value: T[]) => void
-    private _reject!: (error: Error) => void
+    private _reject!: (error: PostgresError) => void
     private _rows: T[] = []
+
+    private _timer?: NodeJS.Timeout
 
     constructor(
         public text: QueryText,
         public args: (string | null)[],
         public state: State,
         public statementName: StatementName,
+        timeout: number,
         public columns?: ColumnDescription[]
     )  {
-        this.promise = new Promise<T[]>((a, b) => {
-            this._resolve = a
-            this._reject = b
-        })
+        const {future, reject, resolve} = Future.withResolvers<T[], PostgresError>()
+        this.future = future
+        this._resolve = resolve
+        this._reject = reject
+
+        this._timer = setTimeout(() => reject(new PostgresError('Query timeout', '57014')), timeout)
     }
 
 
@@ -44,12 +51,53 @@ export class Query<T> {
     }
 
     
-    reject(cause: Error) {
+    reject(cause: PostgresError) {
+        clearTimeout(this._timer)
         this._reject(cause)
     }
 
 
     resolve() {
+        clearTimeout(this._timer)
         this._resolve(this._rows)
+    }
+}
+
+export class StreamQuery<T> {
+    
+    
+    private _timer?: NodeJS.Timeout 
+
+    constructor(
+        public text: QueryText,
+        public args: (string | null)[],
+        public state: State,
+        public statementName: StatementName,
+        timeout: number,
+        private _controller: ReadableStreamDefaultController<T>,
+        public columns?: ColumnDescription[]
+    ) {
+
+        this._timer = setTimeout(() => {
+            this.reject(new PostgresError('Query timeout', '57014'))
+        }, timeout)
+    }
+
+    setState(state: State) {
+        this.state = state
+    }
+
+    push(value: T) {
+        this._controller.enqueue(value)
+    }
+
+    reject(cause: PostgresError) {
+        clearTimeout(this._timer)
+        this._controller.error(cause)
+    }
+
+    resolve() {
+        clearTimeout(this._timer)
+        this._controller.close()
     }
 }

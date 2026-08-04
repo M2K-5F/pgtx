@@ -2,7 +2,7 @@ import { Connection, ConnectionParams } from "./connection"
 import { Transaction } from "./transaction"
 import { Queue } from "./queue";
 import { log } from "console";
-import { Future, Resolve } from "fluent-future";
+import { Begin, Future, Resolve } from "fluent-future";
 import { PostgresError } from "./error";
 
 
@@ -11,9 +11,12 @@ type PoolParams = ConnectionParams & {
 }
 
 
+const ErrPoolClosed = new PostgresError('Pool closed')
+
+
 type Waiter = {
     resolve: (conn: Connection) => void
-    reject: (err: Error) => void
+    reject: (err: PostgresError) => void
 }
 
 /**
@@ -94,21 +97,51 @@ export class Pool {
             const conn = this._available.shift
 
             if (conn.isOpened) {
-                return Resolve(conn)
+                return Resolve<Connection, PostgresError>(conn)
             }
             this._total--
         }
 
         if (this._total < this._max) {
             this._total++
-            return Future.of(Connection.new(this._config))
+            return Connection.new(this._config)
                 .tapErr(() => this._total--)
             
         }
 
-        return Future.of(new Promise<Connection>((resolve, reject) => {
-            this._waiting.push({ resolve, reject })
-        }))
+        const {future, reject, resolve} = Future.withResolvers<Connection, PostgresError>()
+
+        this._waiting.push({ resolve, reject })
+
+        return future
+    }
+
+
+    /**
+     * Provides a safe execution context for performing low-level operations 
+     * directly on a single, dedicated `Connection` instance.
+     * 
+     * Automatically borrows a free socket from the pool, forwards it to the provided callback function, 
+     * and guarantees that the connection is released back to the pool once the execution completes, 
+     * even if errors or unexpected exceptions are thrown. Prevents connection descriptor leaks.
+     *
+     * @template T The return type of the provided callback function.
+     * @param {(conn: Connection) => Promise<T>} fn A callback function that operates on the allocated Connection.
+     * @returns {Future<T, PostgresError>} A `Future` that resolves with the return value of the callback.
+     * 
+     * @example
+     * // Executing low-level engine commands on a single, pinned connection
+     * const status = await pool.withAcquire(async (conn) => {
+     *     return await conn.query`SELECT pg_is_in_recovery()`;
+     * });
+     */
+    withAcquire<T>(fn: (conn: Connection) => Promise<T>) {
+        return Begin()
+            .andThen(() => this.acquire())
+            .andThen(conn => 
+                Future.of(fn(conn))
+                    .finally(() => this.release(conn))
+            )
     }
 
 
@@ -168,7 +201,8 @@ export class Pool {
     begin<T>(txCallback: (transaction: Transaction) => Promise<T>) {
         this._checkClosed()
 
-        return this.acquire()
+        return Begin()
+            .andThen(() => this.acquire())
             .andThen(conn => 
                 conn.begin(txCallback)
                     .finally(() => this.release(conn))
@@ -223,6 +257,67 @@ export class Pool {
 
 
     /**
+     * Executes an SQL query in streaming mode.
+     * 
+     * Data is streamed directly from the PostgreSQL binary network buffer into the Web Streams API 
+     * (`ReadableStream`), bypassing any intermediate array allocation or row accumulation in the JS heap.
+     * This pattern provides a true Zero-Memory Footprint and is ideal for exporting massive tables 
+     * or piping database payloads directly into HTTP responses (e.g., via `Bun.serve` or fetch `Response`).
+     *
+     * @template T The expected shape of a single row interface.
+     * @param {TemplateStringsArray} templates The SQL string parts from the tagged template literal.
+     * @param {...any} args The parameterized query arguments.
+     * @returns {ReadableStream<T>} Synchronously returns a native Web ReadableStream instance.
+     * 
+     * @example
+     * // Streaming a giant table directly to an HTTP response (Bun.serve)
+     * const userStream = pool.stream<User>`SELECT id, name FROM users`;
+     * return new Response(userStream, { headers: { 'Content-Type': 'application/json' } });
+     * 
+     * @example
+     * // Asynchronously iterating over rows as they arrive from the wire socket
+     * const stream = pool.stream<User>`SELECT * FROM orders WHERE status = ${'processed'}`;
+     * for await (const row of stream) {
+     *     console.log(row.id, row.amount); // Row object is eligible for GC immediately after iteration
+     * }
+     */
+    stream<T extends Record<string, any>>(templates: TemplateStringsArray, ...args: any[]): ReadableStream<T> {  
+        this._checkClosed()
+
+        while (this._available.hasMore) {
+            const conn = this._available.shift
+
+            if (!conn.isOpened) {
+                this._total--
+                continue
+            }
+
+            this._available.push(conn)
+            return conn.stream<T>(templates, ...args)
+        }
+
+        let controller!: ReadableStreamDefaultController<T>
+        
+        const stream = new ReadableStream<T>({
+            start: c =>  {
+                controller = c
+            }
+        })
+
+        this.acquire()
+            .tap(conn => {
+                this.release(conn) 
+                conn['_streamWithController']<T>(templates, args, controller)
+            })
+            .catch(err => {
+                controller.error(err)
+            })
+
+        return stream
+    }
+
+
+    /**
      * Sends an asynchronous notification to a channel via `pg_notify`.
      * 
      * @param channelName - The channel identifier
@@ -235,6 +330,42 @@ export class Pool {
      */
     notify(channelName: string, payload: string = "") {
         return this.query`select pg_notify(${channelName}, ${payload})` as Future<[], PostgresError>
+    }
+
+
+    /**
+     * Asynchronously subscribes to pub/sub events on a specific PostgreSQL channel (LISTEN).
+     * 
+     * This method automatically claims a dedicated connection from the pool, registers the callback 
+     * to handle incoming asynchronous database notices (`NotificationResponse` packets), and returns 
+     * a lazy unsubscribe function wrapped in a `Future`.
+     * 
+     * Invoking the returned unsubscribe function will automatically issue the `UNLISTEN` command 
+     * to the database backend, clean up the memory callback, and safely release the connection back to the pool.
+     *
+     * @param {string} channel The name of the PostgreSQL notification channel.
+     * @param {(payload: string) => void} callback The event handler invoked when a NOTIFY message arrives.
+     * @returns {Future<() => Promise<void>, PostgresError>} A `Future` resolving to an async unsubscribe function.
+     * 
+     * @example
+     * // Subscribing to database events directly from the Pool
+     * const unlisten = await pool.listen('order_created', (payload) => {
+     *     const order = JSON.parse(payload);
+     *     console.log(`New order received: ${order.id}`);
+     * });
+     * 
+     * // When the subscription is no longer needed (e.g., during teardown or server stop):
+     * await unlisten(); // The socket cleanly issues UNLISTEN and returns to the pool of free connections.
+     */
+    listen(channel: string, callback: (payload: string) => void) {
+        return this.acquire()
+            .andThen(conn => 
+                conn.listen(channel, callback)
+                    .map(() => async () => {
+                        await conn.unlisten(channel, callback)
+                        this.release(conn)
+                    })
+            )
     }
 
 
@@ -272,7 +403,7 @@ export class Pool {
         }
 
         while (this._waiting.hasMore) {
-            this._waiting.shift.reject(new Error('Pool closed'))
+            this._waiting.shift.reject(ErrPoolClosed)
         }
 
         this._total = 0
