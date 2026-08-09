@@ -11,7 +11,7 @@ import { SocketConnector } from "./protocol/socket-connector"
 import { Queue } from "./queue"
 import { Query, QueryState, StreamQuery } from "./query"
 import { sql } from "."
-import {Begin, Future, Resolve} from 'fluent-future'
+import { Begin, Future, Ok } from 'fluent-future'
 import { PostgresError } from "./error"
 import { ReadableStreamDefaultController } from "stream/web"
 
@@ -138,7 +138,7 @@ export class Connection {
     static new(params: ConnectionParams) {
         const writer = ConnectionRequestWriter.new()
         return createAuthorizedSocket(writer, params)
-            .andThen(socket => Resolve(new Connection(socket, writer, params.logLevel || 'error', params)))
+            .andThen(socket => Ok(new Connection(socket, writer, params.logLevel || 'error', params)))
     }
 
 
@@ -262,7 +262,7 @@ export class Connection {
 
         callbackSet.add(callback)
 
-        return this.query`listen ${sql.ident(channelName)};`
+        return this.query`listen ${sql.ident(channelName)};`.map(() => {})
     }
 
 
@@ -277,10 +277,10 @@ export class Connection {
      * await conn.unlisten('events', callback)
      * ```
      */
-    unlisten(channelName: string, callback: (payload: string) => void): Future<[], PostgresError> {
+    unlisten(channelName: string, callback: (payload: string) => void): Future<void, PostgresError> {
         this._checkOpened()
         if (!this._listeningCallbacks.has(channelName as ChannelName)) {
-            return Resolve([])
+            return Ok()
         }
 
         const callbackSet = this._listeningCallbacks.get(channelName as ChannelName)!
@@ -289,10 +289,10 @@ export class Connection {
 
         if (callbackSet.size === 0) {
             this._listeningCallbacks.delete(channelName as ChannelName)
-            return this.query`unlisten ${sql.ident(channelName)};` as Future<[], PostgresError>
+            return this.query`unlisten ${sql.ident(channelName)};`.map(() => {})
         }
         
-        return Resolve([])
+        return Ok()
     }
 
 

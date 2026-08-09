@@ -2,7 +2,7 @@ import { Connection, ConnectionParams } from "./connection"
 import { Transaction } from "./transaction"
 import { Queue } from "./queue";
 import { log } from "console";
-import { Begin, Future, Resolve } from "fluent-future";
+import { Begin, Future, Ok } from "fluent-future";
 import { PostgresError } from "./error";
 
 
@@ -97,7 +97,7 @@ export class Pool {
             const conn = this._available.shift
 
             if (conn.isOpened) {
-                return Resolve<Connection, PostgresError>(conn)
+                return Ok(conn)
             }
             this._total--
         }

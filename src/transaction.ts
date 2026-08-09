@@ -34,7 +34,8 @@ export class Transaction {
         this.checkActive()
 
         return this.conn.query`COMMIT`
-            .tap(() => this.isFinished = true) as Future<[], PostgresError>
+            .tap(() => {this.isFinished = true})
+            .map(() => {})
     }
 
     /**
@@ -44,7 +45,8 @@ export class Transaction {
         this.checkActive()
 
         return this.conn.query`ROLLBACK` 
-            .tap(() => this.isFinished = true) as Future<[], PostgresError>
+            .tap(() => {this.isFinished = true}) 
+            .map(() => {})
     }
     
     /**
@@ -68,10 +70,10 @@ export class Transaction {
     public savepoint<T>(name: string, callback: (tx: Transaction) => Promise<T>): Future<T, Error> {
         this.checkActive()
 
-        return Begin()
+        return Begin<PostgresError>()
             .andThen(() =>this.conn.query`SAVEPOINT ${IdentifierClause.create(name)}`)
             .andThen(() => 
-                Future.of(callback(this))
+                Future.of(callback(this), )
                     .tap(() => this.conn.query`RELEASE SAVEPOINT ${IdentifierClause.create(name)}`)
                     .tapErr(() => this.conn.query`ROLLBACK TO SAVEPOINT ${IdentifierClause.create(name)}`)
             )   
