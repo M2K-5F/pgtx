@@ -10,7 +10,7 @@ export class ConnectionRequestBuffer {
 
 
     static new(capacity: number) {
-        return new ConnectionRequestBuffer(Buffer.alloc(capacity))
+        return new ConnectionRequestBuffer(Buffer.allocUnsafe(capacity))
     }
 
     

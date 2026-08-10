@@ -56,13 +56,6 @@ export class ConnectionResponseBuffer {
     }
 
 
-    readBytes(length: number): Buffer {
-        const slice = this.buffer.subarray(this.caret, this.caret + length);
-        this.caret += length;
-        return slice;
-    }
-
-
     hasMore(): boolean {
         return this.caret < this.buffer.length
     }
@@ -146,11 +139,37 @@ export class ConnectionResponseBuffer {
     }
 
 
+    readFloat32() {
+        const value = this.buffer.readFloatBE(this.caret)
+        this.caret += 4
+        return value
+    }
+
+
     readFloat64(): number {
         const value = this.buffer.readDoubleBE(this.caret)
         this.caret += 8
         return value
     }
+
+    readUuid() {
+        const buf = this.readBytes(16)
+
+        return buf.toString('hex', 0, 4) + '-' +
+                buf.toString('hex', 4, 6) + '-' +
+                buf.toString('hex', 6, 8) + '-' +
+                buf.toString('hex', 8, 10) + '-' +
+                buf.toString('hex', 10, 16)
+    }
+
+
+    readBytes(length: number) {
+        const result = Buffer.allocUnsafe(length)
+        this.buffer.copy(result, 0, this.caret, this.caret + length)
+        this.caret += length
+        return result
+    }
+
 
     getBufferHash(length: number) {
         let hash = 2166136261
@@ -306,23 +325,20 @@ export class ConnectionResponseReader {
         for (let i = 0; i < fieldsCount; i++) {
             const fieldLength = this.buffer.readInt32()
             const desc = descriptions[i]
-            const key = desc ? desc.name : `col_${i}`
+            const key = desc.name
 
             if (fieldLength === -1) {
                 row[key] = null
                 continue
             }
 
-            const oid = desc ? desc.typeOID : 0
+            const oid = desc.typeOID
 
             switch (oid) {
-                case DataTypeOids.Int4:
-                    row[key] = this.buffer.readInt32()
-                    break
-
                 case DataTypeOids.Text:
                 case DataTypeOids.Varchar:
-                case DataTypeOids.Char: {
+                case DataTypeOids.Char:
+                case DataTypeOids.Bpchar: {
                     if (fieldLength <= 32) {
                         let cacheForColumn = columnValueCache.get(i)
                         if (!cacheForColumn) {
@@ -347,44 +363,60 @@ export class ConnectionResponseReader {
                     }
                 } break
 
-                case DataTypeOids.Int2:
+                case DataTypeOids.Int2: {
                     row[key] = this.buffer.readInt16()
-                    break
+                } break
 
-                case DataTypeOids.Bool:
-                    row[key] = this.buffer.readBool()
-                    break
+                case DataTypeOids.Int4: {
+                    row[key] = this.buffer.readInt32()
+                } break
 
                 case DataTypeOids.Int8: {
                     row[key] = int8toBigint ? this.buffer.readBigInt64() : this.buffer.readInt64()
                 } break
 
-                case DataTypeOids.Float8:
+                case DataTypeOids.Float4: {
+                    row[key] = this.buffer.readFloat32()
+                } break
+                
+                case DataTypeOids.Float8: {
                     row[key] = this.buffer.readFloat64()
-                    break
+                } break
+                
+                case DataTypeOids.Bool: {
+                    row[key] = this.buffer.readBool()
+                } break
 
-                case DataTypeOids.Jsonb:
+                case DataTypeOids.Bytea: {
+                    row[key] = this.buffer.readBytes(fieldLength)
+                } break
+
+                case DataTypeOids.Jsonb: {
                     this.buffer.skipBytes(1)
                     row[key] = JSON.parse(this.buffer.readRawString(fieldLength - 1))
-                    break
+                } break
 
-                case DataTypeOids.Json:
+                case DataTypeOids.Json: {
                     row[key] = JSON.parse(this.buffer.readRawString(fieldLength))
-                    break
+                } break
 
-                case DataTypeOids.Date:
+                case DataTypeOids.Date: {
                     row[key] = this.buffer.readBinaryDate()
-                    break
+                } break
 
                 case DataTypeOids.Timestamp:   
-                case DataTypeOids.Timestamptz:
+                case DataTypeOids.Timestamptz: {
                     row[key] = this.buffer.readBinaryTimestamp()
-                    break
+                } break
 
-                default:
+                case DataTypeOids.Uuid: {
+                    row[key] = this.buffer.readUuid()
+                } break
+
+                default: {
                     this.buffer.skipBytes(fieldLength)
                     row[key] = null
-                    break
+                } break
             }
         }
 

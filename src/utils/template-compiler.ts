@@ -47,6 +47,10 @@ const prepareValue = (value: unknown): string | null => {
             return value.toISOString()
         }
 
+        if (Buffer.isBuffer(value) || value instanceof Uint8Array) {
+            return '\\x' + Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString('hex')
+        }
+
         if (Array.isArray(value)) {
             const elements = value.map(el => {
                 if (el === null || el === undefined) return 'NULL'

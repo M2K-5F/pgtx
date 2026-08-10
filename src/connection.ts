@@ -111,7 +111,10 @@ export class Connection {
         this._logLevel = logLevel
         this._socket = new SocketConnector(socket, 
             (type, _, reader) => this._handlePacket(type, reader),
-            (err) => this._registerReconnect()
+            (err) => {
+                // console.log(err)
+                this._registerReconnect()
+            }
         )
         this._writer = writer
     }

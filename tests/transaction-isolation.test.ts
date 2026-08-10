@@ -84,7 +84,7 @@ describe("Transaction isolation test", async () => {
         pool.release(conn1); pool.release(conn2);
     })
 
-    await it("savepoints isolation test", async () => {
+    it("savepoints isolation test", async () => {
         await pool.query`
         truncate table ${sql.ident(tablename)}`
 
