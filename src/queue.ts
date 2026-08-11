@@ -3,13 +3,9 @@ export class Queue<T> {
     private _pointer = 0
     
     next() {
+        this._queue[this._pointer] = null as T
         this._pointer++
-
-        if (this._pointer > 10000) {
-            this._queue.splice(0, this._pointer)
-            this._pointer = 0
-        }
-
+        
         if (this._pointer >= this._queue.length) {
             this._queue.length = 0
             this._pointer = 0
