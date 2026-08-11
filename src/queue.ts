@@ -3,7 +3,7 @@ export class Queue<T> {
     private _pointer = 0
     
     next() {
-        this._queue[this._pointer] = null as T
+        this._queue[this._pointer] = undefined as T
         this._pointer++
         
         if (this._pointer >= this._queue.length) {

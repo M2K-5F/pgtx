@@ -34,8 +34,7 @@ export class Transaction {
         this.checkActive()
 
         return this.conn.query`COMMIT`
-            .tap(() => {this.isFinished = true})
-            .map(() => {})
+            .tap(() => this.isFinished = true)
     }
 
     /**
@@ -45,8 +44,7 @@ export class Transaction {
         this.checkActive()
 
         return this.conn.query`ROLLBACK` 
-            .tap(() => {this.isFinished = true}) 
-            .map(() => {})
+            .tap(() => this.isFinished = true)
     }
     
     /**
