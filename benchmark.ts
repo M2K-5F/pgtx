@@ -15,9 +15,9 @@ export const config = {
 }
 
 const DB_URL = `postgres://${config.user}:${config.password}@${config.host}:${config.port}/${config.database}`
-const CONCURRENCY = 3000
+let CONCURRENCY = 3000
 
-const pgtxPool = new PgtxPool(config)
+const pgtxPool = new PgtxPool({...config})
 const pgPool = new pg.Pool(config)
 const sqlPostgres = postgres(DB_URL, { max: config.max })
 
@@ -105,6 +105,9 @@ group(`${CONCURRENCY} parallel SELECT-queries`, async () => {
 
 await run()
 
+CONCURRENCY = 10000
+
+// await run()
 await pgtxPool.close()
 await pgPool.end()
 await sqlPostgres.end()
