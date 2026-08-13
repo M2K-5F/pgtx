@@ -122,22 +122,27 @@ jobs:
           SERVER_PID=$!
           sleep 3
           
-          printf "\n\nBENCHMARKING Postgres.js (10000 conns)"
+          echo .
+          echo .
+          echo "BENCHMARKING Postgres.js (10000 conns)"
           wrk -t2 -c10000 -d10s --latency http://localhost:3001/users
           sleep 3
 
-          
-          printf "\n\nBENCHMARKING Postgres.js (1000 conns)"
+          echo .
+          echo .
+          echo "BENCHMARKING Postgres.js (1000 conns)"
           wrk -t2 -c1000 -d10s --latency http://localhost:3001/users
           sleep 3
 
-          
-          printf "\n\nBENCHMARKING Postgres.js (200 conns)"
+          echo .
+          echo .
+          echo "BENCHMARKING Postgres.js (200 conns)"
           wrk -t2 -c200 -d10s --latency http://localhost:3001/users
           sleep 2
 
-
-          printf "\n\nBENCHMARKING Postgres.js (50 conns)"
+          echo .
+          echo .
+          echo "BENCHMARKING Postgres.js (50 conns)"
           wrk -t2 -c50 -d10s --latency http://localhost:3001/users
           sleep 2
 
@@ -148,22 +153,29 @@ jobs:
           npx tsx server-pgtx.ts &
           SERVER_PID=$!
           sleep 3 
-          
-          printf "\n\n\n\nBENCHMARKING @m2k-5f/pgtx (10000 conns)"
+
+          echo .
+          echo .
+          echo .
+          echo "BENCHMARKING @m2k-5f/pgtx (10000 conns)"
           wrk -t2 -c10000 -d10s --latency http://localhost:3000/users
           sleep 3
 
-          
-          printf "\n\nBENCHMARKING @m2k-5f/pgtx (1000 conns)"
+          echo .
+          echo .
+          echo "BENCHMARKING @m2k-5f/pgtx (1000 conns)"
           wrk -t2 -c1000 -d10s --latency http://localhost:3000/users
           sleep 3
 
-          
-          printf "\n\nBENCHMARKING @m2k-5f/pgtx (200 conns)"
+          echo .
+          echo .
+          echo "BENCHMARKING @m2k-5f/pgtx (200 conns)"
           wrk -t2 -c200 -d10s --latency http://localhost:3000/users
           sleep 2
           
-          printf "\n\nBENCHMARKING @m2k-5f/pgtx (50 conns)"
+          echo .
+          echo .
+          echo "BENCHMARKING @m2k-5f/pgtx (50 conns)"
           wrk -t2 -c50 -d10s --latency http://localhost:3000/users
           sleep 2
 

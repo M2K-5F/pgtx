@@ -5,7 +5,12 @@ export class Queue<T> {
     next() {
         this._queue[this._pointer] = undefined as T
         this._pointer++
-        
+
+        if (this._pointer > 10000) {
+            this._queue.splice(0, this._pointer)
+            this._pointer = 0
+        }
+
         if (this._pointer >= this._queue.length) {
             this._queue.length = 0
             this._pointer = 0
@@ -16,7 +21,7 @@ export class Queue<T> {
         return this._queue[this._pointer]
     }
     
-    get last() {return  this._queue[this._queue.length -1]}
+    get last() {return this._queue[this._queue.length -1]}
 
 
     get shift() {

@@ -4,6 +4,7 @@ import pg from 'pg';
 import postgres from 'postgres';
 import assert from 'node:assert/strict';
 
+
 export const config = {
   host: process.env.PGHOST || 'localhost',
   user: process.env.PGUSER || 'postgres',
@@ -40,7 +41,7 @@ await pgPool.query(`
   SELECT 'User ' || i, floor(random() * 1000) FROM generate_series(1, 1000) s(i);
 `)
 
-group(`${CONCURRENCY} parallel SELECT-queries`, () => {
+group(`${CONCURRENCY} parallel SELECT-queries`, async () => {
   bench('postgres.js (Pipeline)', async () => {
     const promises: Promise<void>[] = []
     
@@ -58,6 +59,7 @@ group(`${CONCURRENCY} parallel SELECT-queries`, () => {
     
     await Promise.all(promises)
   })
+
 
   bench('Pgtx (Pipeline)', async () => {
     const promises: Promise<void>[] = []
@@ -80,7 +82,6 @@ group(`${CONCURRENCY} parallel SELECT-queries`, () => {
     assert.equal(counter, CONCURRENCY)
   })
 
-  
 
   bench('node-postgres / pg', async () => {
     const promises: Promise<void>[] = []
