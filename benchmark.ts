@@ -15,7 +15,7 @@ export const config = {
 }
 
 const DB_URL = `postgres://${config.user}:${config.password}@${config.host}:${config.port}/${config.database}`
-let CONCURRENCY = 3000
+let CONCURRENCY = 10000
 
 const pgtxPool = new PgtxPool({...config})
 const pgPool = new pg.Pool(config)
