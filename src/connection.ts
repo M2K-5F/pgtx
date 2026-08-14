@@ -714,10 +714,10 @@ export class Connection {
 
             case ResponseTypes.ReadyForQuery: {
                 reader.readReadyForQuery()
-
-                this._pipelinesQueue.next()
+                const current = this._pipelinesQueue.current
                 
-                if (this._pipelinesQueue.current.hasMore) {
+                this._pipelinesQueue.next()
+                if (current.hasMore) {
                     console.log(
                         `PROTOCOL DESYNC: ReadyForQuery with ${this._pipelinesQueue.current.size} queries remaining`
                     )
