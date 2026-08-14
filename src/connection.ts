@@ -171,7 +171,6 @@ export class Connection {
      */
     query<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]) {
         this._checkOpened()
-        this._registerFlush()
 
         const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
         
@@ -326,7 +325,6 @@ export class Connection {
      */
     stream<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]) {
         this._checkOpened()
-        this._registerFlush()
 
         const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
         
@@ -353,7 +351,6 @@ export class Connection {
 
     private _streamWithController<T extends Record<string, any>>(templates: TemplateStringsArray, params: any[], controller: ReadableStreamDefaultController<T>) {
         this._checkOpened()
-        this._registerFlush()
 
         const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
         
@@ -486,37 +483,40 @@ export class Connection {
 
 
     private _writeQuery(query: Query<any> | StreamQuery<any>) {        
+        this._registerFlush().push(query)
+        
         if (query.state === QueryState.Parsing) {
             this._writer
                 .writeParse(query.statementName, query.text)
                 .writeDescribe(query.statementName)
-                .writeBind("", query.statementName, query.args)
-                .writeExecute("")
         }
+        
         if (query.state === QueryState.Describing) {
             this._writer
                 .writeDescribe(query.statementName)
-                .writeBind("", query.statementName, query.args)
-                .writeExecute("")
         }
-        if (query.state === QueryState.Executing) {
-            this._writer
-                .writeBind("", query.statementName, query.args)
-                .writeExecute("")
-        }
-
-        this._pipelinesQueue.last.push(query)
+        
+        
+        this._writer
+            .writeBind("", query.statementName, query.args)
+            .writeExecute("")
+        
     }
 
 
     private _registerFlush() {
         if (!this._isFlushing) {
             this._isFlushing = true
-            this._pipelinesQueue.push(new Queue<Query<any>>())
-            setImmediate(() => {
-                this._flush()                
-            })
+
+            const pipeline = new Queue<Query<any>>()
+            this._pipelinesQueue.push(pipeline)
+
+            setImmediate(() => this._flush())
+
+            return pipeline
         }
+
+        return this._pipelinesQueue.last
     }
 
 
@@ -528,16 +528,18 @@ export class Connection {
 
         if (this._isReconnecting) {
             this._reconnect().then(() => {
-                this._isFlushing = false
                 this._socket.write(this._writer.writeSync())
                 this._writer.clear()
+                
+                this._isFlushing = false
             })
         }
 
         else {
-            this._isFlushing = false
             this._socket.write(this._writer.writeSync())
             this._writer.clear()
+            
+            this._isFlushing = false
         }
     }
 
@@ -560,6 +562,8 @@ export class Connection {
 
 
     private async _reconnect() {
+        console.log('reconnecting');
+        
         this._resetConnectionState(ErrConnectionReconnecring)
 
         const socket = await createAuthorizedSocket(ConnectionRequestWriter.new(), this.params)
@@ -714,13 +718,6 @@ export class Connection {
 
             case ResponseTypes.ReadyForQuery: {
                 reader.readReadyForQuery()
-                const current = this._pipelinesQueue.current
-                
-                if (current.hasMore) {
-                    console.log(
-                        `PROTOCOL DESYNC: ReadyForQuery with ${this._pipelinesQueue.current.size} queries remaining`
-                    )
-                }
                 
                 this._pipelinesQueue.next()
             } break

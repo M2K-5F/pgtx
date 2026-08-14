@@ -16,7 +16,7 @@ export class Queue<T> {
         return this._queue[this._pointer]
     }
     
-    get last() {return this._queue[this._queue.length -1]}
+    get last() {return this._queue[this._queue.length - 1]}
 
 
     get shift() {
