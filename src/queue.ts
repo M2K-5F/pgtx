@@ -43,3 +43,67 @@ export class Queue<T> {
 
     get isFree() {return this._pointer >= this._queue.length}
 }
+
+
+
+export class RingQueue<T> {
+    private readonly _queue: T[]
+    private readonly _mask: number
+
+    private _head = 0
+    private _tail = 0
+    private _size = 0
+
+    constructor(requestedCapacity = 32768) {
+        const capacity = 2 ** Math.ceil(Math.log2(requestedCapacity))
+
+        this._queue = new Array<T>(capacity)
+        this._mask = capacity - 1
+    }
+
+    next() {
+        if (this._size === 0) return
+
+        this._queue[this._head] = undefined as T
+        this._head = (this._head + 1) & this._mask
+        this._size--
+    }
+
+    get current() {
+        return this._queue[this._head]
+    }
+
+    get last() {
+        return this._queue[(this._tail - 1) & this._mask]
+    }
+
+    get shift() {
+        const item = this.current
+        this.next()
+        return item
+    }
+
+    push(item: T) {
+        if (this.isFull) return 
+
+        this._queue[this._tail] = item
+        this._tail = (this._tail + 1) & this._mask
+        this._size++
+    }
+
+    get size() {
+        return this._size
+    }
+
+    get hasMore() {
+        return this._size !== 0
+    }
+
+    get isFree() {
+        return this._size === 0
+    }
+
+    get isFull() {
+        return this._size === this._queue.length
+    }
+}

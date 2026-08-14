@@ -8,7 +8,7 @@ import { compileSqlTemplate } from "./utils/template-compiler"
 import { Branded, ColumnDescription } from "./types"
 import { Transaction } from "./transaction"
 import { SocketConnector } from "./protocol/socket-connector"
-import { Queue } from "./queue"
+import { Queue, RingQueue } from "./queue"
 import { Query, QueryState, StreamQuery } from "./query"
 import { sql } from "."
 import { Begin, Future, Ok } from 'fluent-future'
@@ -26,13 +26,19 @@ export type ConnectionParams = {
     logLevel?: LogLevel,
     int8toBigint?: boolean,
     queryTimeout?: number
+    batchCapacity?: number,
 }
 
+
+const ErrBatchOverflowed = new PostgresError(
+    `BatchQueueOverflowError: Connection queue capacity exceeded.
+    Please increase the batch queue capacity parameter in your connection config.`
+)
 const ErrConnectionClosed = new PostgresError("Connection is closed", 'connection_closed', "", "ERROR")
 const ErrConnectionReconnecring = new PostgresError("Connection are reconnecting", "connection_reconnecting", "", "ERROR")
 
 
-type Pipeline = Queue<Query<any> | StreamQuery<any>>
+type QueryBatch = RingQueue<Query<any> | StreamQuery<any>>
 
 export type StatementName = Branded<string, 'StatementName'>
 
@@ -79,7 +85,7 @@ export class Connection {
     private _socket: SocketConnector
     private _writer: ConnectionRequestWriter
 
-    private _pipelinesQueue = new Queue<Pipeline>()
+    private _batchQueue: Queue<QueryBatch> = new Queue()
 
     private _described = new Map<StatementName, ColumnDescription[]>()
     private _describingPending = new Set<StatementName>()
@@ -180,7 +186,8 @@ export class Connection {
 
         const query = this._createQuery<T>(text, args)
 
-        this._writeQuery(query)
+        if (this._writeQuery(query)) return Future.reject(ErrBatchOverflowed)
+
         query.startTimeout(this.params.queryTimeout || 30000)
         return query.future
     }
@@ -343,7 +350,8 @@ export class Connection {
 
         const query = this._createStream<T>(text, args, controller)
 
-        this._writeQuery(query)
+        if (this._writeQuery(query)) throw ErrBatchOverflowed
+
         query.startTimeout(this.params.queryTimeout || 30000)
         return stream
     }
@@ -360,7 +368,8 @@ export class Connection {
         
         const query = this._createStream<T>(text, args, controller)
 
-        this._writeQuery(query)
+        if (this._writeQuery(query)) throw ErrBatchOverflowed
+
         query.startTimeout(this.params.queryTimeout || 30000)
         
         return query
@@ -483,7 +492,11 @@ export class Connection {
 
 
     private _writeQuery(query: Query<any> | StreamQuery<any>) {        
-        this._registerFlush().push(query)
+        const batch = this._registerFlush()
+
+        if (batch.isFull) return true
+
+        batch.push(query)
         
         if (query.state === QueryState.Parsing) {
             this._writer
@@ -508,15 +521,15 @@ export class Connection {
         if (!this._isFlushing) {
             this._isFlushing = true
 
-            const pipeline = new Queue<Query<any>>()
-            this._pipelinesQueue.push(pipeline)
+            const batch: QueryBatch = new RingQueue<Query<any>>(this.params.batchCapacity)
+            this._batchQueue.push(batch)
 
             setTimeout(() => this._flush())
 
-            return pipeline
+            return batch
         }
 
-        return this._pipelinesQueue.last
+        return this._batchQueue.last
     }
 
 
@@ -594,14 +607,14 @@ export class Connection {
 
 
     private _getCurrentQuery() {
-        return this._pipelinesQueue.current.current
+        return this._batchQueue.current.current
     }
 
 
     private _rejectPipeline(error: PostgresError) {
-        if (this._pipelinesQueue.isFree) return 
+        if (this._batchQueue.isFree) return 
 
-        const queue = this._pipelinesQueue.current
+        const queue = this._batchQueue.current
 
         while (queue.hasMore) {
             queue.shift.reject(error)
@@ -672,7 +685,7 @@ export class Connection {
             case ResponseTypes.ComandComplete: {
                 reader.readCommandComplete()
 
-                if (this._pipelinesQueue.isFree) {
+                if (this._batchQueue.isFree) {
                     this.close()
                     break
                 }
@@ -686,7 +699,7 @@ export class Connection {
 
                 query.state = QueryState.Completed
                 
-                this._pipelinesQueue.current.next()
+                this._batchQueue.current.next()
 
                 query.resolve()
             } break
@@ -719,7 +732,7 @@ export class Connection {
             case ResponseTypes.ReadyForQuery: {
                 reader.readReadyForQuery()
                 
-                this._pipelinesQueue.next()
+                this._batchQueue.next()
             } break
 
 
@@ -770,9 +783,9 @@ export class Connection {
     close() {
         this._isOpened = false
         this._socket.destroy()
-        while (this._pipelinesQueue.hasMore) {
+        while (this._batchQueue.hasMore) {
             this._rejectPipeline(ErrConnectionClosed)
-            this._pipelinesQueue.next()
+            this._batchQueue.next()
         }
     }
 }
