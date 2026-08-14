@@ -12,7 +12,7 @@ export type CompiledSqlQuery = {
 }
 
 export type ClauseStrategyParams = {
-    text: string[],
+    text: string,
     args: any[],
 }
 

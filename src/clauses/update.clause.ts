@@ -17,10 +17,10 @@ export class UpdateClause<T extends Record<string, any>> extends Clause {
 
             
         entries.forEach(([key, value], index) => {
-            if (index) params.text.push(', ')
+            if (index) params.text += ', '
             
             params.args.push(value)
-            params.text.push(`${key} = $${params.args.length}`)
+            params.text += `${key} = $${params.args.length}`
         })
     }
 }

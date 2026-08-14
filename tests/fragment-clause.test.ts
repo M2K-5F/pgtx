@@ -4,7 +4,7 @@ import { sql } from "../src"
 
 describe("fragment clause test", () => {
     const createParams = () => ({
-        text: [] as string[],
+        text: "",
         args: [] as any[],
     })
 
@@ -14,7 +14,7 @@ describe("fragment clause test", () => {
 
         sql.fragment`SELECT * FROM "users" ${fragment}`.mapIntoQuery(params)
 
-        assert(params.text.join(''), `SELECT * FROM "users" WHERE name = name`)
+        assert(params.text, `SELECT * FROM "users" WHERE name = name`)
         assert(params.args, [])
     })
 
@@ -28,7 +28,7 @@ describe("fragment clause test", () => {
             .mapIntoQuery(params)
 
         assert(
-            params.text.join(''), 
+            params.text, 
             "INSERT INTO users (role_id) VALUES ((SELECT id FROM roles where role_name = $1 limit $2)) WHERE id = $3"
         )
         assert(params.args, ["admin", "1", "1"])

@@ -4,7 +4,7 @@ import { sql } from "../src"
 
 describe("literal clause test", () => {
     const createParams = () => ({
-        text: [] as string[],
+        text: "",
         args: [] as any[],
     })
 
@@ -13,7 +13,7 @@ describe("literal clause test", () => {
         
         sql.literal("literal").mapIntoQuery(params)
 
-        assert(params.text.join(''), "literal")
+        assert(params.text, "literal")
         assert(params.args.length, 0)
     })
 

@@ -4,7 +4,7 @@ import { sql } from "../src"
 
 describe("update clause test", () => {
     const createParams = () => ({
-        text: [] as string[],
+        text: "",
         args: [] as any[],
     });
 
@@ -14,7 +14,7 @@ describe("update clause test", () => {
 
         sql.update(updateMap).mapIntoQuery(params)
 
-        assert(params.text.join(''), `id = $1, name = $2`)
+        assert(params.text, `id = $1, name = $2`)
         assert(params.args, [123, "Alice"])
     })
 
@@ -24,7 +24,7 @@ describe("update clause test", () => {
 
         sql.update(updateMap).mapIntoQuery(params)
 
-        assert(params.text.join(''), `id = $1`)
+        assert(params.text, `id = $1`)
         assert(params.args, [123])
     })
 })

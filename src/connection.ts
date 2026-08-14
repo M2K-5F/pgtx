@@ -25,20 +25,9 @@ export type ConnectionParams = {
     database: string
     logLevel?: LogLevel,
     int8toBigint?: boolean,
-    queryTimeout?: number,
-    queryQueueCapacity?: number,
-    pipelinesQueueCapacity?: number
+    queryTimeout?: number
 }
 
-
-const ErrPipelineQueueOverflowed = new PostgresError(
-    `PipelineQueueOverflowError: Connection queue capacity exceeded.
-    Please increase the pipeline queue capacity parameter in your connection config.`
-)
-const ErrQueryQueueOverflowed =  new PostgresError(
-    `QueryQueueOverflowError: Connection queue capacity exceeded.
-    Please increase the query queue capacity parameter in your connection config.`
-)
 const ErrConnectionClosed = new PostgresError("Connection is closed", 'connection_closed', "", "ERROR")
 const ErrConnectionReconnecring = new PostgresError("Connection are reconnecting", "connection_reconnecting", "", "ERROR")
 
@@ -90,7 +79,7 @@ export class Connection {
     private _socket: SocketConnector
     private _writer: ConnectionRequestWriter
 
-    private _pipelinesQueue: Queue<Pipeline>
+    private _pipelinesQueue = new Queue<Pipeline>()
 
     private _described = new Map<StatementName, ColumnDescription[]>()
     private _describingPending = new Set<StatementName>()
@@ -128,7 +117,6 @@ export class Connection {
             }
         )
         this._writer = writer
-        this._pipelinesQueue = new Queue<Pipeline>(params.pipelinesQueueCapacity || 20)
     }
 
 
@@ -153,9 +141,7 @@ export class Connection {
     static new(params: ConnectionParams) {
         const writer = ConnectionRequestWriter.new()
         return createAuthorizedSocket(writer, params)
-            .andThen(socket => Ok(
-                new Connection(socket, writer, params.logLevel || 'error', params)
-            ))
+            .andThen(socket => Ok(new Connection(socket, writer, params.logLevel || 'error', params)))
     }
 
 
@@ -185,10 +171,9 @@ export class Connection {
      */
     query<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]) {
         this._checkOpened()
-        
-        if (this._registerFlush()) return Future.reject(ErrPipelineQueueOverflowed)
+        this._registerFlush()
 
-        const {text, args} = compileSqlTemplate({templates, args: params}) as {text: QueryText, args: (string | null)[]}
+        const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
         
         if (this._logLevel === 'query') {
             console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
@@ -196,7 +181,7 @@ export class Connection {
 
         const query = this._createQuery<T>(text, args)
 
-        if (this._writeQuery(query)) return Future.reject(ErrQueryQueueOverflowed)
+        this._writeQuery(query)
         query.startTimeout(this.params.queryTimeout || 30000)
         return query.future
     }
@@ -341,10 +326,9 @@ export class Connection {
      */
     stream<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]) {
         this._checkOpened()
-        
-        if (this._registerFlush()) throw ErrPipelineQueueOverflowed
+        this._registerFlush()
 
-        const {text, args} = compileSqlTemplate({templates, args: params}) as {text: QueryText, args: (string | null)[]}
+        const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
         
         if (this._logLevel === 'query') {
             console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
@@ -361,8 +345,7 @@ export class Connection {
 
         const query = this._createStream<T>(text, args, controller)
 
-        if (this._writeQuery(query)) throw ErrQueryQueueOverflowed
-
+        this._writeQuery(query)
         query.startTimeout(this.params.queryTimeout || 30000)
         return stream
     }
@@ -370,9 +353,9 @@ export class Connection {
 
     private _streamWithController<T extends Record<string, any>>(templates: TemplateStringsArray, params: any[], controller: ReadableStreamDefaultController<T>) {
         this._checkOpened()
-        if (this._registerFlush()) throw ErrPipelineQueueOverflowed
+        this._registerFlush()
 
-        const {text, args} = compileSqlTemplate({templates, args: params}) as {text: QueryText, args: (string | null)[]}
+        const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
         
         if (this._logLevel === 'query') {
             console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
@@ -380,8 +363,7 @@ export class Connection {
         
         const query = this._createStream<T>(text, args, controller)
 
-        if (this._writeQuery(query)) throw ErrQueryQueueOverflowed
-
+        this._writeQuery(query)
         query.startTimeout(this.params.queryTimeout || 30000)
         
         return query
@@ -523,17 +505,14 @@ export class Connection {
                 .writeExecute("")
         }
 
-        return this._pipelinesQueue.last.push(query)
+        this._pipelinesQueue.last.push(query)
     }
 
 
     private _registerFlush() {
         if (!this._isFlushing) {
-            if (this._pipelinesQueue.push(new Queue<Query<any>>(this.params.queryQueueCapacity))) {
-                return true
-            } 
-            
             this._isFlushing = true
+            this._pipelinesQueue.push(new Queue<Query<any>>())
             setImmediate(() => {
                 this._flush()                
             })

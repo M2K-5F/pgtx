@@ -11,9 +11,7 @@ export class ExcludeUpdateClause extends Clause {
     }
 
     public mapIntoQuery(params: ClauseStrategyParams) {
-        params.text.push(
-            this.fields.map(f => `${f} = EXCLUDED.${f}`)
-                .join(', ')
-        )
+        params.text += this.fields.map(f => `${f} = EXCLUDED.${f}`)
+            .join(', ')
     }
 }

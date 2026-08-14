@@ -17,17 +17,17 @@ export class InsertClause<T extends Record<string, any>> extends Clause {
         const columns = Object.keys(this.inserts[0])
         const columnsCount = columns.length
 
-        params.text.push(`(${columns.join(', ')}) VALUES `)
+        params.text += `(${columns.join(', ')}) VALUES `
 
         this.inserts.forEach((object, index) => {
             if (Object.keys(object).length !== columnsCount) {
                 throw new Error(`all rows must have the same columns`)
             }
 
-            if (index) params.text.push(', ')
+            if (index) params.text += ', '
             
 
-            params.text.push(
+            params.text += 
                 `(${Object.values(object).map(value => {
                     if (value === undefined) return "DEFAULT"
                     
@@ -35,7 +35,6 @@ export class InsertClause<T extends Record<string, any>> extends Clause {
                     return `$${params.args.length}`
                 })
                     .join(", ")})`
-            )
         })
     }
 }

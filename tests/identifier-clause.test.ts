@@ -4,7 +4,7 @@ import { sql } from "../src"
 
 describe("identifier clause test", () => {
     const createParams = () => ({
-        text: [] as string[],
+        text: "",
         args: [] as any[],
     })
 
@@ -14,7 +14,7 @@ describe("identifier clause test", () => {
         sql.ident("identificator").mapIntoQuery(params)
 
         assert(params.args.length, 0)
-        assert(params.text.join(''), '"identificator"')
+        assert(params.text, '"identificator"')
     })
 
     it("ident undefined parameter test", () => {

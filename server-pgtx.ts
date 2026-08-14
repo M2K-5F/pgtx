@@ -33,6 +33,12 @@ const server = createServer(async (req, res) => {
       return
     }
 
+    if (user.id !== targetId) {
+      res.writeHead(500, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Ужасающе' }))
+      return
+    }
+
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify(user))
     return

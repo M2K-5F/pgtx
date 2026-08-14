@@ -17,6 +17,6 @@ export class LiteralClause<T extends string> extends Clause {
     }
 
     override mapIntoQuery(params: ClauseStrategyParams) {
-        params.text.push(this.value)
+        params.text += this.value
     }
 }

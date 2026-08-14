@@ -16,10 +16,10 @@ export class WhereClause<T extends Record<string, any>> extends Clause {
         if (entries.length === 0) throw new Error('Where clause has no data to update. All values are `undefined`')
             
         entries.forEach(([key, value], index) => {
-            if (index) params.text.push(' AND ')
+            if (index) params.text += ' AND '
             
             params.args.push(value)
-            params.text.push(`"${key}" = $${params.args.length}`)
+            params.text += `"${key}" = $${params.args.length}`
         })
     }
 }

@@ -3,7 +3,7 @@ import { deepEqual as assert } from "node:assert"
 import { sql } from "../src"
 describe("insert clause test", () => {
     const createParams = () => ({
-        text: [] as string[],
+        text: "",
         args: [] as any[],
     })
 
@@ -13,7 +13,7 @@ describe("insert clause test", () => {
 
         sql.insert(...entities).mapIntoQuery(params)
 
-        assert(params.text.join(''), `(id, name) VALUES ($1, $2), ($3, $4)`)
+        assert(params.text, `(id, name) VALUES ($1, $2), ($3, $4)`)
         assert(params.args, [123, "Bob", 124, "Alice"])
     })        
 
@@ -23,7 +23,7 @@ describe("insert clause test", () => {
 
         sql.insert(...entities).mapIntoQuery(params)
 
-        assert(params.text.join(''), `(id, name) VALUES ($1, $2), ($3, DEFAULT)`)
+        assert(params.text, `(id, name) VALUES ($1, $2), ($3, DEFAULT)`)
         assert(params.args, [123, "Bob", 124])
     })
 

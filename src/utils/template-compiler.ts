@@ -1,22 +1,25 @@
 import { Clause } from "../clauses/abstract.clause"
 import { ClauseStrategyParams, CompiledSqlQuery, CompileSQLParams } from "../types"
 
+const cache = new WeakMap<TemplateStringsArray, string>()
 
-
-export function compileSqlTemplate(params: Readonly<CompileSQLParams>, argOffset = 0): CompiledSqlQuery {
-    const templateLength = params.templates.length
+export function compileSqlTemplate(templates: TemplateStringsArray, args: unknown[], argOffset = 0): CompiledSqlQuery {
+    const cached = cache.get(templates)
+    if (cached) return {args: args.map(prepareValue), text: cached}
+    
+    const templateLength = templates.length
             
     const query: ClauseStrategyParams = {
-        text: [],
+        text: '',
         args: [],
     }
 
-    params.templates.forEach((template, index) => {
-        query.text.push(template)
+    templates.forEach((template, index) => {
+        query.text += template
 
         if (index === templateLength - 1) return
 
-        const value = params.args[index]
+        const value = args[index]
 
         if (value instanceof Clause) {
             value.mapIntoQuery(query)
@@ -29,11 +32,13 @@ export function compileSqlTemplate(params: Readonly<CompileSQLParams>, argOffset
             }
 
             query.args.push(value)
-            query.text.push(`$${query.args.length + argOffset}`)
+            query.text += `$${query.args.length + argOffset}`
         }
     })
+
+    !args.some(value => value instanceof Clause) && cache.set(templates, query.text)
     
-    return {args: query.args.map(prepareValue), text: query.text.join('')}
+    return {args: query.args.map(prepareValue), text: query.text}
 }
 
 

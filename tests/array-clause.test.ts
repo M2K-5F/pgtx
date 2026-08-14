@@ -4,7 +4,7 @@ import { sql } from "../src"
 
 describe("array clause test", () => {
     const createParams = () => ({
-        text: [] as string[],
+        text: '',
         args: [] as any[],
     })
 
@@ -14,7 +14,7 @@ describe("array clause test", () => {
 
         sql.array(array).mapIntoQuery(params)
 
-        assert(params.text.join(''), "$1, $2, $3, $4")
+        assert(params.text, "$1, $2, $3, $4")
         assert(params.args, [10, "string", true, null])
     })
 
@@ -28,7 +28,7 @@ describe("array clause test", () => {
 
         sql.array(array).mapIntoQuery(params)
 
-        assert(params.text.join(''), `static, "ident", sql fragment $1`)
+        assert(params.text, `static, "ident", sql fragment $1`)
         assert(params.args, ["value"])
     })
 
@@ -42,7 +42,7 @@ describe("array clause test", () => {
 
         sql.array(array, " AND ").mapIntoQuery(params)
 
-        assert(params.text.join(''), "name = $1 AND age = $2 AND 1 = 1")
+        assert(params.text, "name = $1 AND age = $2 AND 1 = 1")
         assert(params.args, ["name", "18"])
     })
 

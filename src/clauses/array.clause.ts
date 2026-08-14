@@ -21,14 +21,14 @@ export class ArrayClause extends Clause {
                 throw new TypeError(`Array item at index ${index} is undefined`)
             }
 
-            if (index) params.text.push(this.separator)
+            if (index) params.text += this.separator
 
             if (value instanceof Clause) {
                 value.mapIntoQuery(params)
             } 
             else {
                 params.args.push(value)
-                params.text.push(`$${params.args.length}`)
+                params.text += `$${params.args.length}`
             }
         })
     }
