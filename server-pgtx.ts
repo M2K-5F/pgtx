@@ -7,7 +7,7 @@ const pool = new Pool({
   user: process.env.PGUSER || 'postgres',
   password: process.env.PGPASSWORD || 'postgres',
   database: process.env.PGDATABASE || 'pgtx_test',
-  max: Number(process.env.PGMAX) || 10 
+  max: Number(process.env.PGMAX) || 1
 });
 
 interface User {
