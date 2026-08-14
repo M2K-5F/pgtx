@@ -33,11 +33,19 @@ const server = createServer(async (req, res) => {
       return
     }
 
-    if (user.id !== targetId) {
-      res.writeHead(500, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ error: 'Ужасающе' }))
-      return
-    }
+      if (
+        !user ||
+        Object.getPrototypeOf(user) !== Object.prototype ||
+        Object.keys(user).length !== 3 ||
+        user.id !== targetId ||
+        typeof user.id !== 'number' ||
+        typeof user.name !== 'string' ||
+        typeof user.balance !== 'number'
+      ) {
+        throw new Error(
+          `CORRUPTED RESULT: target=${targetId}, result=${JSON.stringify(user)}`
+        )
+      }
 
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify(user))
