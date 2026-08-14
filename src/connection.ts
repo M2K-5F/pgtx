@@ -716,12 +716,13 @@ export class Connection {
                 reader.readReadyForQuery()
                 const current = this._pipelinesQueue.current
                 
-                this._pipelinesQueue.next()
                 if (current.hasMore) {
                     console.log(
                         `PROTOCOL DESYNC: ReadyForQuery with ${this._pipelinesQueue.current.size} queries remaining`
                     )
                 }
+                
+                this._pipelinesQueue.next()
             } break
 
 
