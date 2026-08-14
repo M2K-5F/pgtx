@@ -27,6 +27,7 @@ export type ConnectionParams = {
     int8toBigint?: boolean,
     queryTimeout?: number
     batchCapacity?: number,
+    flushShedule?: "nextTick" | "Immediate"
 }
 
 
@@ -524,7 +525,9 @@ export class Connection {
             const batch: QueryBatch = new RingQueue<Query<any>>(this.params.batchCapacity)
             this._batchQueue.push(batch)
 
-            setTimeout(() => this._flush())
+            this.params.flushShedule === 'nextTick'
+                ? nextTick(() => this._flush()) 
+                : setImmediate(() => this._flush())
 
             return batch
         }

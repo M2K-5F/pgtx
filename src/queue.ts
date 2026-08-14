@@ -62,8 +62,6 @@ export class RingQueue<T> {
     }
 
     next() {
-        if (this._size === 0) return
-
         this._queue[this._head] = undefined as T
         this._head = (this._head + 1) & this._mask
         this._size--
@@ -84,8 +82,6 @@ export class RingQueue<T> {
     }
 
     push(item: T) {
-        if (this.isFull) return 
-
         this._queue[this._tail] = item
         this._tail = (this._tail + 1) & this._mask
         this._size++
