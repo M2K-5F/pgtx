@@ -511,7 +511,7 @@ export class Connection {
             const pipeline = new Queue<Query<any>>()
             this._pipelinesQueue.push(pipeline)
 
-            nextTick(() => this._flush())
+            setTimeout(() => this._flush())
 
             return pipeline
         }
