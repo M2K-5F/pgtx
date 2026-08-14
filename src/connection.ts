@@ -715,7 +715,7 @@ export class Connection {
             case ResponseTypes.ReadyForQuery: {
                 reader.readReadyForQuery()
 
-                this._pipelinesQueue.next()
+                this._pipelinesQueue.current.isFree && this._pipelinesQueue.next()
             } break
 
 
