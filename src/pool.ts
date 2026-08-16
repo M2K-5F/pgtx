@@ -1,6 +1,6 @@
 import { Connection, ConnectionParams } from "./connection"
 import { Transaction } from "./transaction"
-import { Queue } from "./queue";
+import { Queue, RingQueue } from "./queue";
 import { log } from "console";
 import { Begin, Future, Ok } from "fluent-future";
 import { PostgresError } from "./error";
@@ -55,7 +55,7 @@ type Waiter = {
  * ```
  */
 export class Pool {
-    private _available = new Queue<Connection>()
+    private _available: RingQueue<Connection>
     private _config: ConnectionParams
     private _max: number
     private _total = 0
@@ -69,6 +69,7 @@ export class Pool {
     constructor(params: PoolParams) {
         this._config = params
         this._max = params.max || 20
+        this._available = new RingQueue(this._max)
     }
 
 

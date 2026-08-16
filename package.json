@@ -1,6 +1,6 @@
 {
   "name": "@m2k-5f/pgtx",
-  "version": "2.5.3",
+  "version": "2.5.4",
   "type": "module",
   "description": "Blazing-fast PostgreSQL driver with pipeline support.",
   "files": [
@@ -16,11 +16,13 @@
   },
   "repository": {
     "type": "git",
-    "url": "git://github.com/M2K-5F/pgtx.git"
+    "url": "git://github.com/M2Kc-s4/pgtx.git"
   },
   "keywords": [
     "sql",
     "postgres",
+    "blazing",
+    "stream",
     "driver",
     "pipeline",
     "query-builder",
@@ -28,11 +30,11 @@
     "transactions",
     "prepared-statements"
   ],
-  "author": "M2K-5F",
+  "author": "M2Kc-s4",
   "license": "MIT",
-  "homepage": "https://github.com/M2K-5F/pgtx",
+  "homepage": "https://github.com/M2Kc-s4/pgtx",
   "bugs": {
-    "url": "https://github.com/M2K-5F/pgtx/issues"
+    "url": "https://github.com/M2Kc-s4/pgtx/issues"
   },
   "exports": {
     ".": {

@@ -1,14 +1,15 @@
 import { Clause } from "../clauses/abstract.clause"
-import { ClauseStrategyParams, CompiledSqlQuery, CompileSQLParams } from "../types"
+import { ClauseStrategyParams, CompiledSqlQuery } from "../types"
 
 const cache = new WeakMap<TemplateStringsArray, string>()
 
 export function compileSqlTemplate(templates: TemplateStringsArray, args: unknown[], argOffset = 0): CompiledSqlQuery {
     const cached = cache.get(templates)
+    
     if (cached) return {args: args.map(prepareValue), text: cached}
     
     const templateLength = templates.length
-            
+    
     const query: ClauseStrategyParams = {
         text: '',
         args: [],
