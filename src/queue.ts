@@ -54,10 +54,10 @@ export class RingQueue<T> {
     private _tail = 0
     private _size = 0
 
-    constructor(requestedCapacity = 32768) {
+    constructor(requestedCapacity = 20000) {
         const capacity = 2 ** Math.ceil(Math.log2(requestedCapacity))
 
-        this._queue = new Array<T>(capacity)
+        this._queue = new Array<T>()
         this._mask = capacity - 1
     }
 
@@ -100,6 +100,6 @@ export class RingQueue<T> {
     }
 
     get isFull() {
-        return this._size === this._queue.length
+        return this._size === this._mask + 1
     }
 }

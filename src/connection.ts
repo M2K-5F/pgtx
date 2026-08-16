@@ -32,8 +32,8 @@ export type ConnectionParams = {
 
 
 const ErrBatchOverflowed = new PostgresError(
-    `BatchQueueOverflowError: Connection queue capacity exceeded.
-    Please increase the batch queue capacity parameter in your connection config.`
+    `BatchOverflowError: Connection queue capacity exceeded.
+    Please increase the batch capacity parameter in your connection config.`
 )
 const ErrConnectionClosed = new PostgresError("Connection is closed", 'connection_closed', "", "ERROR")
 const ErrConnectionReconnecring = new PostgresError("Connection are reconnecting", "connection_reconnecting", "", "ERROR")

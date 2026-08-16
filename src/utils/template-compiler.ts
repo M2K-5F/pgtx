@@ -77,7 +77,7 @@ const prepareValue = (value: unknown): string | null => {
         return prepareObject(value)
     }
 
-    return value.toString()
+    return String(value)
 }
 
 
