@@ -1,5 +1,5 @@
 import { bench, group, run } from "mitata"
-import { Pool as PgtxPool, sql } from "@m2k-5f/pgtx"
+import { Pool as PgtxPool } from "@m2k-5f/pgtx"
 import pg from "pg"
 import postgres from "postgres"
 import assert from "node:assert/strict"
@@ -71,31 +71,31 @@ for (const concurrency of concurrencyLevels) {
 
     bench("Pgtx", async () => {
       await Promise.all(
-        Array.from({ length: concurrency }, async (_, i) => {
-          let counter = 0
-          const ids = Array.from({length: 5}, (_, j) => (i % 1000) + 1 + j);
+        Array.from({ length: concurrency }, (_, i) => {
+          const id = (i % 1000) + 1
 
-          (await pgtx.query<User>`
+          return pgtx
+            .query<User>`
               SELECT id, name, balance
               FROM bench_users
-              WHERE id in (${sql.array(ids)})
-          `).forEach(row => check(row, ids[counter++]))
-            
+              WHERE id = ${id}
+            `
+            .then(rows => check(rows[0], id))
         })
       )
     })
 
     bench("postgres.js", async () => {
       await Promise.all(
-        Array.from({ length: concurrency }, async (_, i) => {
-          let counter = 0
-          const ids = Array.from({length: 5}, (_, j) => (i % 1000) + 1 + j);
+        Array.from({ length: concurrency }, (_, i) => {
+          const id = (i % 1000) + 1
 
-          (await postgresjs<User[]>`
+          return postgresjs<User[]>`
             SELECT id, name, balance
             FROM bench_users
-            WHERE id in ${postgresjs(ids)}
-          `).forEach(user => check(user, ids[counter++]))
+            WHERE id = ${id}
+          `
+            .then(rows => check(rows[0], id))
         })
       )
     })
