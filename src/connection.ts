@@ -693,7 +693,7 @@ export class Connection {
             case ResponseTypes.ReadyForQuery: {
                 reader.readReadyForQuery()
                 
-                this._batchQueue.next()
+                if (!this._batchQueue.current.isFree) this._batchQueue.next()
             } break
 
 
@@ -717,7 +717,7 @@ export class Connection {
             } break
 
 
-            default: console.warn('Undeclared response type: ', type);
+            default: console.log('Undeclared response type: ', type);
         }
     }
 
