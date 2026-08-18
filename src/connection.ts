@@ -693,7 +693,7 @@ export class Connection {
             case ResponseTypes.ReadyForQuery: {
                 reader.readReadyForQuery()
                 
-                if (!this._batchQueue.current.isFree) this._batchQueue.next()
+                this._batchQueue.next()
             } break
 
 
