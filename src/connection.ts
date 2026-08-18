@@ -79,6 +79,7 @@ export class Connection {
     private _activeBatch: Batch | null = null
     private _isOpened = true
     private _isReconnecting = false
+    private _cachedBuffer = ConnectionRequestWriter.new()
 
     private _socket: SocketConnector
 
@@ -138,7 +139,7 @@ export class Connection {
 
     private _registerBatch() {
         if (!this._activeBatch) {
-            const batch = new Batch()
+            const batch = new Batch(this._cachedBuffer.clear())
             this._activeBatch = batch
             setImmediate(() => {
                 this._sync(batch)

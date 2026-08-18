@@ -8,9 +8,9 @@ export class Batch {
     private _queryQueue: Queue<PostgresQuery>
     private _buffer: ConnectionRequestWriter
 
-    constructor() {
+    constructor(buffer: ConnectionRequestWriter) {
         this._queryQueue = new Queue()
-        this._buffer = ConnectionRequestWriter.new()
+        this._buffer = buffer
     }
 
     registerQuery(query: PostgresQuery, timeout: number) {
