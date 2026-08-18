@@ -18,8 +18,6 @@ export class ConnectionRequestBuffer {
         const required = needed + this.offset
 
         if (required <= this.buffer.length) return
-
-        console.log('enshuring');
         
 
         let newCapacity = this.buffer.length * 2

@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { Pool } from '@m2k-5f/pgtx';
+import { Ok } from 'fluent-future';
 
 const pool = new Pool({
   host: process.env.PGHOST || 'localhost',
@@ -23,8 +24,10 @@ const server = createServer(async (req, res) => {
     const [user] = await pool.query<User>`
       SELECT id, name, balance FROM bench_users WHERE id = ${targetId}
     `
-    .catch((err) => {
-      return [null]
+    .orElse(err => {
+      if (err.message === 'Query timeout') console.log('Query timeout');
+      
+      return Ok([null])
     })
 
     if (!user) {

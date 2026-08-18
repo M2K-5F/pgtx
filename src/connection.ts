@@ -9,11 +9,12 @@ import { Branded, ColumnDescription } from "./types"
 import { Transaction } from "./transaction"
 import { SocketConnector } from "./protocol/socket-connector"
 import { Queue, RingQueue } from "./queue"
-import { Query, QueryState, State, StreamQuery } from "./query"
+import { ParseQuery, Query, QueryState, SimpleQuery, State, StreamQuery } from "./query"
 import { sql } from "."
 import { Begin, Future, Ok } from 'fluent-future'
-import { PostgresError } from "./error"
+import { ErrConnectionClosed, ErrConnectionReconnecting, PostgresError } from "./error"
 import { ReadableStreamDefaultController } from "stream/web"
+import { Batch } from "./batch"
 
 type LogLevel = "none" | "error" | "notice" | "query"
 
@@ -30,16 +31,6 @@ export type ConnectionParams = {
     flushShedule?: "nextTick" | "Immediate"
 }
 
-
-const ErrBatchOverflowed = new PostgresError(
-    `BatchOverflowError: Connection queue capacity exceeded.
-    Please increase the batch capacity parameter in your connection config.`
-)
-const ErrConnectionClosed = new PostgresError("Connection is closed", 'connection_closed', "", "ERROR")
-const ErrConnectionReconnecting = new PostgresError("Connection are reconnecting", "connection_reconnecting", "", "ERROR")
-
-
-type QueryBatch = RingQueue<Query<any> | StreamQuery<any>>
 
 export type StatementName = Branded<string, 'StatementName'>
 
@@ -84,16 +75,17 @@ export type QueryMeta = {
  */
 export class Connection {
     private readonly params: ConnectionParams
-    private _isFlushing = false
+
+    private _activeBatch: Batch | null = null
     private _isOpened = true
     private _isReconnecting = false
-    private _socket: SocketConnector
-    private _writer: ConnectionRequestWriter
 
-    private _batchQueue: Queue<QueryBatch> = new Queue()
+    private _socket: SocketConnector
+
+    private _batchQueue: Queue<Batch> = new Queue()
 
     private _parsed = new Map<QueryText, QueryMeta>()
-    private _parsing = new Map<QueryText, StatementName>()
+    private _parsing = new Map<QueryText, Future<QueryMeta, PostgresError>>()
 
     private _listeningCallbacks = new Map<ChannelName, Set<(payload: string) => void>>()
     private _stmtCounter = 0
@@ -107,7 +99,6 @@ export class Connection {
 
     private constructor(
         socket: Socket,
-        writer: ConnectionRequestWriter,
         logLevel: LogLevel, 
         params: ConnectionParams
     ) {
@@ -116,11 +107,10 @@ export class Connection {
         this._socket = new SocketConnector(socket, 
             (type, _, reader) => this._handlePacket(type, reader),
             (err) => {
-                // console.log(err)
+                console.log(err)
                 this._registerReconnect()
             }
         )
-        this._writer = writer
     }
 
 
@@ -145,7 +135,34 @@ export class Connection {
     static new(params: ConnectionParams) {
         const writer = ConnectionRequestWriter.new()
         return createAuthorizedSocket(writer, params)
-            .andThen(socket => Ok(new Connection(socket, writer, params.logLevel || 'error', params)))
+            .andThen(socket => Ok(new Connection(socket, params.logLevel || 'error', params)))
+    }
+
+
+    private _registerBatch() {
+        if (!this._activeBatch) {
+            const batch = new Batch()
+            this._activeBatch = batch
+            setImmediate(() => {
+                this._sync(batch)
+            })
+
+            return batch
+        }
+
+        return this._activeBatch
+    }
+
+
+    private _sync(batch: Batch) {
+        if (!this._isOpened) {
+            batch.reject(ErrConnectionClosed)
+            return
+        }
+
+        this._socket.write(batch.end())
+        this._activeBatch = null
+        this._batchQueue.push(batch)
     }
 
 
@@ -183,12 +200,38 @@ export class Connection {
             console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
         }
 
-        const query = this._createQuery<T>(text, args)
+        const batch = this._registerBatch()
 
-        if (this._writeQuery(query)) return Future.reject(ErrBatchOverflowed)
+        if (this._parsed.has(text)) {
+            const meta = this._parsed.get(text)!
+            
+            const query = new SimpleQuery<T>(
+                meta.statement, text, args, meta.columns
+            )
+            batch.registerQuery(query, this.params.queryTimeout || 30000)
+            
+            return query.future
+        }
 
-        query.startTimeout(this.params.queryTimeout || 30000)
-        return query
+        if (!this._parsing.has(text)) {
+            const parseQuery = new ParseQuery(this._nextStatement(), text)
+
+            this._parsing.set(text, parseQuery.future)
+
+            batch.registerQuery(parseQuery, this.params.queryTimeout || 30000)
+        }
+
+        const future = this._parsing.get(text)!
+        
+
+        return future.andThen(meta => {
+            const query = new SimpleQuery<T>(
+                meta.statement, text, args, meta.columns
+            )
+            this._registerBatch().registerQuery(query, this.params.queryTimeout || 30000)
+            
+            return query.future
+        })
     }
 
 
@@ -353,13 +396,40 @@ export class Connection {
                 controller = c
             }
         })
+
+        const batch = this._registerBatch()
+
+        if (this._parsed.has(text)) {
+            const meta = this._parsed.get(text)!
+            const query = new StreamQuery<T>(
+                meta.statement, text, args, controller, meta.columns
+            )
+            batch.registerQuery(query, this.params.queryTimeout || 30000)
+            
+            return stream
+        }
+
+        if (!this._parsing.has(text)) {
+            const parseQuery = new ParseQuery(this._nextStatement(), text)
+
+            this._parsing.set(text, parseQuery.future)
+
+            batch.registerQuery(parseQuery, this.params.queryTimeout || 30000)
+        }
+
+        const future = this._parsing.get(text)!
+
+        future
+            .tap(meta => {
+                const query = new StreamQuery<T>(
+                    meta.statement, text, args, controller, meta.columns
+                )
+                this._registerBatch().registerQuery(query, this.params.queryTimeout || 30000)
+            })
+            .catch(err => 
+                controller.error(err)
+            )
         
-
-        const query = this._createStream<T>(text, args, controller)
-
-        if (this._writeQuery(query)) throw ErrBatchOverflowed
-
-        query.startTimeout(this.params.queryTimeout || 30000)
         return stream
     }
     
@@ -373,152 +443,38 @@ export class Connection {
         if (this._logLevel === 'query') {
             console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
         }
-        
-        const query = this._createStream<T>(text, args, controller)
 
-        if (this._writeQuery(query)) throw ErrBatchOverflowed
 
-        query.startTimeout(this.params.queryTimeout || 30000)
-        
-        return query
-    }
-    
-    
-    private _createQuery<T>(text: QueryText, args: (string | null)[]) {
+        const batch = this._registerBatch()
+
         if (this._parsed.has(text)) {
             const meta = this._parsed.get(text)!
-
-            return new Query<T>(
-                text, args, 
-                QueryState.Executing, 
-                meta.statement,
-                meta.columns
+            const query = new StreamQuery<T>(
+                meta.statement, text, args, controller, meta.columns
             )
+            batch.registerQuery(query, this.params.queryTimeout || 30000)
         }
 
-        else {
-            if (this._parsing.has(text)) {
-                const statementName = this._parsing.get(text)!
-                return new Query<T>(
-                    text, args,
-                    QueryState.Executing,
-                    statementName,
-                )
-            }
-            else {
-                const statementName = this._nextStatement()
-                this._parsing.set(text, statementName)
-                return new Query<T>(
-                    text, args,
-                    QueryState.Parsing,
-                    statementName,
-                )
-            }
+        if (!this._parsing.has(text)) {
+            const parseQuery = new ParseQuery(this._nextStatement(), text)
+
+            this._parsing.set(text, parseQuery.future)
+
+            batch.registerQuery(parseQuery, this.params.queryTimeout || 30000)
         }
-    }
 
+        const future = this._parsing.get(text)!
 
-    private _createStream<T>(text: QueryText, args: (string | null)[], controller: ReadableStreamDefaultController<T>) {
-        if (this._parsed.has(text)) {
-            const meta = this._parsed.get(text)!
-
-            return new StreamQuery<T>(
-                text, args, 
-                QueryState.Executing, 
-                meta.statement,
-                controller,
-                meta.columns
+        future
+            .tap(meta => {
+                const query = new StreamQuery<T>(
+                    meta.statement, text, args, controller, meta.columns
+                )
+                this._registerBatch().registerQuery(query, this.params.queryTimeout || 30000)
+            })
+            .catch(err => 
+                controller.error(err)
             )
-        }
-
-        else {
-            if (this._parsing.has(text)) {
-                const statementName = this._parsing.get(text)!
-                return new StreamQuery<T>(
-                    text, args,
-                    QueryState.Executing,
-                    statementName,
-                    controller
-                )
-            }
-            else {
-                const statementName = this._nextStatement()
-                this._parsing.set(text, statementName)
-                return new StreamQuery<T>(
-                    text, args,
-                    QueryState.Parsing,
-                    statementName,
-                    controller
-                )
-            }
-        }
-    }
-
-
-    private _writeQuery(query: Query<any> | StreamQuery<any>) {        
-        const batch = this._registerFlush()
-
-        if (batch.isFull) return true
-
-        batch.push(query)
-        
-        if (query.state === QueryState.Parsing) {
-            this._writer
-                .writeParse(query.statementName, query.text)
-                .writeDescribe(query.statementName)
-        }
-        
-        this._writer
-            .writeBind("", query.statementName, query.args)
-            .writeExecute("")
-        
-    }
-
-
-    private _registerFlush() {
-        if (!this._isFlushing) {
-            this._isFlushing = true
-
-            const batch: QueryBatch = new RingQueue<Query<any>>(this.params.batchCapacity)
-            this._batchQueue.push(batch)
-
-            // this.params.flushShedule === 'nextTick'
-                // ? nextTick(() => this._flush()) 
-                // : setImmediate(() => this._flush())
-            setTimeout(() => this._flush())
-            return batch
-        }
-
-        return this._batchQueue.last
-    }
-
-
-    private _flush() {      
-        if (!this._isOpened) {
-            this._rejectAllBatches(ErrConnectionClosed)
-            return
-        }
-
-        if (this._isReconnecting) {
-            this._reconnect()
-                .then(() => {
-                    this._isFlushing = false
-                    void this._restoreSubscriptions()
-                    
-                    this._socket.write(this._writer.writeSync())
-                    this._writer.clear()
-                })
-                .then(() => {
-                    this._isReconnecting = false
-                })
-        }
-
-        else {
-            this._socket.write(this._writer.writeSync())
-            this._writer.clear()
-            
-            this._isFlushing = false
-        }
     }
 
     
@@ -528,14 +484,14 @@ export class Connection {
         console.log('reconnect registered');
         
         this._rejectAllBatches(ErrConnectionReconnecting)
-        this._writer.clear()     
+        this._activeBatch = null 
     }
 
 
     private _resetConnectionState(cause: PostgresError) {
         this._parsed.clear()
         this._parsing.clear()
-        this._writer.clear()
+        this._activeBatch = null
         
         this._rejectAllBatches(cause)
     }
@@ -569,27 +525,14 @@ export class Connection {
     }
 
 
-    private _getCurrentQuery() {
+    private _getCurrentQuery() {        
         return this._batchQueue.current.current
     }
 
 
-    private _rejectCurrentBatch(error: PostgresError) {
-        const queue = this._batchQueue.current
-
-        while (queue.hasMore) {
-            queue.shift.reject(error)
-        }
-    }
-
-
-    private _rejectAllBatches(error: PostgresError) {
+    private _rejectAllBatches(cause: PostgresError) {
         while (this._batchQueue.hasMore) {
-            const batch = this._batchQueue.shift
-
-            while (batch.hasMore) {
-                batch.shift.reject(error)
-            }
+            this._batchQueue.shift.reject(cause)
         }
     }
 
@@ -603,11 +546,6 @@ export class Connection {
 
             case ResponseTypes.BindComplete: {
                 reader.readBindComplete()
-                const query = this._getCurrentQuery()
-
-                if (!query.columns) {
-                    query.columns = this._parsed.get(query.text)?.columns
-                }
             } break
 
 
@@ -623,28 +561,35 @@ export class Connection {
 
             case ResponseTypes.NoData: {
                 reader.readNoData()
-
-                const query = this._getCurrentQuery()
+                
+                const query = this._getCurrentQuery() as ParseQuery
+                
+                const meta = {statement: query.statement, columns: []}
+                
                 this._parsing.delete(query.text)
-                this._parsed.set(query.text, {statement: query.statementName, columns: []})
-                query.state = QueryState.Executing
-                query.columns = []
+                query.resolve(meta)
+                this._parsed.set(query.text, meta)
+                this._batchQueue.current.next()
             } break
 
 
             case ResponseTypes.RowDescription: {
                 const columns = reader.readRowDescription()
 
-                const query = this._getCurrentQuery()
+                const query = this._getCurrentQuery() as ParseQuery
+                
+                const meta = {statement: query.statement, columns}
+                
                 this._parsing.delete(query.text)
-                this._parsed.set(query.text, {statement: query.statementName, columns: columns})
-                query.state = QueryState.Executing
-                query.columns = columns
+                query.resolve(meta)
+                this._parsed.set(query.text, meta)
+                this._batchQueue.current.next()
             } break
 
 
+
             case ResponseTypes.DataRow: {
-                let query = this._getCurrentQuery()
+                let query = this._getCurrentQuery() as StreamQuery<any> | SimpleQuery<any>
 
                 query.push(reader.readDataRow(query.columns!, this.params.int8toBigint))
             } break
@@ -653,19 +598,7 @@ export class Connection {
             case ResponseTypes.ComandComplete: {
                 reader.readCommandComplete()
 
-                if (this._batchQueue.isFree) {
-                    this.close()
-                    break
-                }
-
-                const query = this._getCurrentQuery()
-                
-                if (!query) {
-                    this.close()
-                    break
-                }
-
-                query.state = QueryState.Completed
+                const query = this._getCurrentQuery() as StreamQuery<any> | SimpleQuery<any>
                 
                 query.resolve()
                 
@@ -684,9 +617,8 @@ export class Connection {
 
                 this._parsing.delete(query.text)
 
-                query.state = QueryState.Failed
 
-                this._rejectCurrentBatch(error)
+                this._batchQueue.current.reject(error)
             } break
 
 

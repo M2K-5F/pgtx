@@ -42,3 +42,8 @@ export class PostgresError extends Error {
         return this.code.startsWith('08') || this.code.startsWith('57') && this.code !== '57014'
     }
 }
+
+export const ErrQueryTimeout = new PostgresError('Query timeout', '57014')
+
+export const ErrConnectionClosed = new PostgresError("Connection is closed", 'connection_closed', "", "ERROR")
+export const ErrConnectionReconnecting = new PostgresError("Connection are reconnecting", "connection_reconnecting", "", "ERROR")
