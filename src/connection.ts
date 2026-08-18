@@ -482,10 +482,10 @@ export class Connection {
             const batch: QueryBatch = new RingQueue<Query<any>>(this.params.batchCapacity)
             this._batchQueue.push(batch)
 
-            this.params.flushShedule === 'nextTick'
-                ? nextTick(() => this._flush()) 
-                : setImmediate(() => this._flush())
-
+            // this.params.flushShedule === 'nextTick'
+                // ? nextTick(() => this._flush()) 
+                // : setImmediate(() => this._flush())
+            setTimeout(() => this._flush())
             return batch
         }
 
