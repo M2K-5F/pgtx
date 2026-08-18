@@ -12,29 +12,35 @@ const sql = postgres({
 
 const server = createServer(async (req, res) => {
   if (req.url === '/users') {
-    const targetId = Math.floor(Math.random() * 1000) + 1;
+    let counter = 0
+    const ids = Array.from({length: 5}, (_, j) => (Math.floor(Math.random() * 1000) + 1 + j)).sort((a, b) => a - b)
 
-    const [user] = await sql`
-      SELECT id, name, balance FROM bench_users WHERE id = ${targetId}
+    const users = await sql`
+      SELECT id, name, balance FROM bench_users WHERE id in (${sql(ids)}) order by id
     `
     .catch((err) => {
       return [null]
     })
-
-    if (!user) {
+    console.log(users);
+    
+    if (!users[0]) {
       res.writeHead(504, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'Timeout' }))
       return
     }
-
-    if (user.id !== targetId) {
-      res.writeHead(500, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ error: 'Ужасающе' }))
-      return
+    
+    for (const user of users) {
+      if (user!.id !== ids[counter++]) {
+        res.writeHead(500, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Ужасающе' }))
+        return
+      }
     }
 
+    
+
     res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify(user))
+    res.end(JSON.stringify(users))
     return
   }
 

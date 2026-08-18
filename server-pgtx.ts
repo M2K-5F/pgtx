@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
-import { Pool } from '@m2k-5f/pgtx';
+import { Pool, sql } from '@m2k-5f/pgtx';
+import { count } from 'node:console';
 
 const pool = new Pool({
   host: process.env.PGHOST || 'localhost',
@@ -18,29 +19,37 @@ interface User {
 
 const server = createServer(async (req, res) => {
   if (req.url === '/users') {
-    const targetId = Math.floor(Math.random() * 1000) + 1
+    let counter = 0
+    const i = Math.floor(Math.random() * 1000) + 1
+    const ids = Array.from({length: 5}, (_, j) => (i % 1000) + 1 + j).sort((a, b) => a - b)
 
-    const [user] = await pool.query<User>`
-      SELECT id, name, balance FROM bench_users WHERE id = ${targetId}
+    const users = await pool.query<User>`
+      SELECT id, name, balance FROM bench_users WHERE id in (${sql.array(ids)}) order by id
     `
     .catch((err) => {
       return [null]
     })
 
-    if (!user) {
+    if (!users[0]) {
       res.writeHead(504, { 'Content-Type': 'application/json' })
       res.end(JSON.stringify({ error: 'Timeout' }))
       return
     }
-
-    if (user.id !== targetId) {
-      res.writeHead(500, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ error: 'Ужасающе' }))
-      return
+    
+    for (const user of users) {
+      if (user!.id !== ids[counter++]) {
+        console.log(users, ids);
+        
+        res.writeHead(500, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Ужасающе' }))
+        return
+      }
     }
 
+    
+
     res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify(user))
+    res.end(JSON.stringify(users))
     return
   }
 

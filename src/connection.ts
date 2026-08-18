@@ -9,7 +9,7 @@ import { Branded, ColumnDescription } from "./types"
 import { Transaction } from "./transaction"
 import { SocketConnector } from "./protocol/socket-connector"
 import { Queue, RingQueue } from "./queue"
-import { Query, QueryState, StreamQuery } from "./query"
+import { Query, QueryState, State, StreamQuery } from "./query"
 import { sql } from "."
 import { Begin, Future, Ok } from 'fluent-future'
 import { PostgresError } from "./error"
@@ -36,7 +36,7 @@ const ErrBatchOverflowed = new PostgresError(
     Please increase the batch capacity parameter in your connection config.`
 )
 const ErrConnectionClosed = new PostgresError("Connection is closed", 'connection_closed', "", "ERROR")
-const ErrConnectionReconnecring = new PostgresError("Connection are reconnecting", "connection_reconnecting", "", "ERROR")
+const ErrConnectionReconnecting = new PostgresError("Connection are reconnecting", "connection_reconnecting", "", "ERROR")
 
 
 type QueryBatch = RingQueue<Query<any> | StreamQuery<any>>
@@ -47,6 +47,10 @@ export type QueryText = Branded<string, 'QueryText'>
 
 export type ChannelName = Branded<string, "ChannelName">
 
+export type QueryMeta = {
+    statement: StatementName
+    columns: ColumnDescription[]
+}
 
 /**
  * Represents a single dedicated connection to the PostgreSQL database.
@@ -88,10 +92,8 @@ export class Connection {
 
     private _batchQueue: Queue<QueryBatch> = new Queue()
 
-    private _described = new Map<StatementName, ColumnDescription[]>()
-    private _describingPending = new Set<StatementName>()
-    private _parsed = new Map<QueryText, StatementName>()
-    private _parsingPending = new Map<QueryText, StatementName>()
+    private _parsed = new Map<QueryText, QueryMeta>()
+    private _parsing = new Map<QueryText, StatementName>()
 
     private _listeningCallbacks = new Map<ChannelName, Set<(payload: string) => void>>()
     private _stmtCounter = 0
@@ -100,11 +102,6 @@ export class Connection {
 
     private _nextStatement() {
         return `s-${this._stmtCounter++}` as StatementName
-    }
-
-
-    private _checkOpened() {
-        if (!this.isOpened) throw ErrConnectionClosed
     }
 
 
@@ -176,8 +173,9 @@ export class Connection {
      * const users = await conn.query<User>`SELECT * FROM users`
      * ```
      */
-    query<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]) {
-        this._checkOpened()
+    query<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]): Future<T[], PostgresError> {
+        if (!this._isOpened) return Future.reject(ErrConnectionClosed)
+        if (this._isReconnecting) return Future.reject(ErrConnectionReconnecting)
 
         const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
         
@@ -190,7 +188,7 @@ export class Connection {
         if (this._writeQuery(query)) return Future.reject(ErrBatchOverflowed)
 
         query.startTimeout(this.params.queryTimeout || 30000)
-        return query.future
+        return query
     }
 
 
@@ -216,7 +214,8 @@ export class Connection {
      * ```
      */
     begin<T>(txCallback: (transaction: Transaction) => Promise<T>) {
-        this._checkOpened()
+        if (!this._isOpened) return Future.reject(ErrConnectionClosed)
+        if (this._isReconnecting) return Future.reject(ErrConnectionReconnecting)
 
         const tx = new Transaction(this)
 
@@ -246,7 +245,9 @@ export class Connection {
      * ```
      */
     notify(channelName: string, payload: string = "") {
-        this._checkOpened()
+        if (!this._isOpened) return Future.reject(ErrConnectionClosed)
+        if (this._isReconnecting) return Future.reject(ErrConnectionReconnecting)
+
         return this.query`select pg_notify(${channelName}, ${payload})`
     }
 
@@ -263,7 +264,9 @@ export class Connection {
      * ```
      */
     listen(channelName: string, callback: (payload: string) => void) {
-        this._checkOpened()
+        if (!this._isOpened) return Future.reject(ErrConnectionClosed)
+        if (this._isReconnecting) return Future.reject(ErrConnectionReconnecting)
+
         if (!this._listeningCallbacks.has(channelName as ChannelName)) {
             this._listeningCallbacks.set(channelName as ChannelName, new Set())
         }
@@ -288,7 +291,9 @@ export class Connection {
      * ```
      */
     unlisten(channelName: string, callback: (payload: string) => void): Future<void, PostgresError> {
-        this._checkOpened()
+        if (!this._isOpened) return Future.reject(ErrConnectionClosed)
+        if (this._isReconnecting) return Future.reject(ErrConnectionReconnecting)
+
         if (!this._listeningCallbacks.has(channelName as ChannelName)) {
             return Ok()
         }
@@ -332,7 +337,8 @@ export class Connection {
      * }
      */
     stream<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]) {
-        this._checkOpened()
+        if (!this._isOpened) throw ErrConnectionClosed
+        if (this._isReconnecting) throw ErrConnectionReconnecting 
 
         const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
         
@@ -359,7 +365,8 @@ export class Connection {
     
 
     private _streamWithController<T extends Record<string, any>>(templates: TemplateStringsArray, params: any[], controller: ReadableStreamDefaultController<T>) {
-        this._checkOpened()
+        if (!this._isOpened) throw ErrConnectionClosed
+        if (this._isReconnecting) throw ErrConnectionReconnecting 
 
         const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
         
@@ -379,49 +386,28 @@ export class Connection {
     
     private _createQuery<T>(text: QueryText, args: (string | null)[]) {
         if (this._parsed.has(text)) {
-            const statementName = this._parsed.get(text)!
+            const meta = this._parsed.get(text)!
 
-            if (this._described.has(statementName)) {
-                const columns = this._described.get(statementName)
-                return new Query<T>(
-                    text, args, 
-                    QueryState.Executing, 
-                    statementName,
-                    columns
-                )
-            }
-            else {
-                if (this._describingPending.has(statementName)) {
-                    return new Query<T>(
-                        text, args, 
-                        QueryState.Executing,
-                        statementName,
-                    )
-                }
-                else {
-                    this._describingPending.add(statementName)
-
-                    return new Query<T>(
-                        text, args,
-                        QueryState.Describing,
-                        statementName,
-                    )
-                }
-            }
+            return new Query<T>(
+                text, args, 
+                QueryState.Executing, 
+                meta.statement,
+                meta.columns
+            )
         }
 
         else {
-            if (this._parsingPending.has(text)) {
-                const statementName = this._parsingPending.get(text)!
+            if (this._parsing.has(text)) {
+                const statementName = this._parsing.get(text)!
                 return new Query<T>(
                     text, args,
-                    QueryState.Describing,
+                    QueryState.Executing,
                     statementName,
                 )
             }
             else {
                 const statementName = this._nextStatement()
-                this._parsingPending.set(text, statementName)
+                this._parsing.set(text, statementName)
                 return new Query<T>(
                     text, args,
                     QueryState.Parsing,
@@ -434,53 +420,30 @@ export class Connection {
 
     private _createStream<T>(text: QueryText, args: (string | null)[], controller: ReadableStreamDefaultController<T>) {
         if (this._parsed.has(text)) {
-            const statementName = this._parsed.get(text)!
+            const meta = this._parsed.get(text)!
 
-            if (this._described.has(statementName)) {
-                const columns = this._described.get(statementName)
-                return new StreamQuery<T>(
-                    text, args, 
-                    QueryState.Executing, 
-                    statementName,
-                    controller,
-                    columns
-                )
-            }
-            else {
-                if (this._describingPending.has(statementName)) {
-                    return new StreamQuery<T>(
-                        text, args, 
-                        QueryState.Executing,
-                        statementName,
-                        controller
-                    )
-                }
-                else {
-                    this._describingPending.add(statementName)
-
-                    return new StreamQuery<T>(
-                        text, args,
-                        QueryState.Describing,
-                        statementName,
-                        controller
-                    )
-                }
-            }
+            return new StreamQuery<T>(
+                text, args, 
+                QueryState.Executing, 
+                meta.statement,
+                controller,
+                meta.columns
+            )
         }
 
         else {
-            if (this._parsingPending.has(text)) {
-                const statementName = this._parsingPending.get(text)!
+            if (this._parsing.has(text)) {
+                const statementName = this._parsing.get(text)!
                 return new StreamQuery<T>(
                     text, args,
-                    QueryState.Describing,
+                    QueryState.Executing,
                     statementName,
                     controller
                 )
             }
             else {
                 const statementName = this._nextStatement()
-                this._parsingPending.set(text, statementName)
+                this._parsing.set(text, statementName)
                 return new StreamQuery<T>(
                     text, args,
                     QueryState.Parsing,
@@ -504,12 +467,6 @@ export class Connection {
                 .writeParse(query.statementName, query.text)
                 .writeDescribe(query.statementName)
         }
-        
-        if (query.state === QueryState.Describing) {
-            this._writer
-                .writeDescribe(query.statementName)
-        }
-        
         
         this._writer
             .writeBind("", query.statementName, query.args)
@@ -538,17 +495,22 @@ export class Connection {
 
     private _flush() {      
         if (!this._isOpened) {
-            this._rejectPipeline(ErrConnectionClosed)
+            this._rejectAllBatches(ErrConnectionClosed)
             return
         }
 
         if (this._isReconnecting) {
-            this._reconnect().then(() => {
-                this._socket.write(this._writer.writeSync())
-                this._writer.clear()
-                
-                this._isFlushing = false
-            })
+            this._reconnect()
+                .then(() => {
+                    this._isFlushing = false
+                    void this._restoreSubscriptions()
+                    
+                    this._socket.write(this._writer.writeSync())
+                    this._writer.clear()
+                })
+                .then(() => {
+                    this._isReconnecting = false
+                })
         }
 
         else {
@@ -561,26 +523,26 @@ export class Connection {
 
     
     private _registerReconnect() {
+        if (this._isReconnecting) return
         this._isReconnecting = true
-        this._rejectPipeline(ErrConnectionReconnecring)
+        console.log('reconnect registered');
+        
+        this._rejectAllBatches(ErrConnectionReconnecting)
+        this._writer.clear()     
     }
 
 
     private _resetConnectionState(cause: PostgresError) {
         this._parsed.clear()
-        this._described.clear()
-        this._describingPending.clear()
-        this._parsingPending.clear()
+        this._parsing.clear()
         this._writer.clear()
         
-        this._rejectPipeline(cause)
+        this._rejectAllBatches(cause)
     }
-
+    
 
     private async _reconnect() {
-        console.log('reconnecting');
-        
-        this._resetConnectionState(ErrConnectionReconnecring)
+        console.log('reconnecting')
 
         const socket = await createAuthorizedSocket(ConnectionRequestWriter.new(), this.params)
 
@@ -591,10 +553,8 @@ export class Connection {
         )
 
         this._socket = connector
-
-        void this._restoreSubscriptions()
         
-        this._isReconnecting = false
+        this._resetConnectionState(ErrConnectionReconnecting)
     }
 
     
@@ -614,9 +574,7 @@ export class Connection {
     }
 
 
-    private _rejectPipeline(error: PostgresError) {
-        if (this._batchQueue.isFree) return 
-
+    private _rejectCurrentBatch(error: PostgresError) {
         const queue = this._batchQueue.current
 
         while (queue.hasMore) {
@@ -625,20 +583,31 @@ export class Connection {
     }
 
 
+    private _rejectAllBatches(error: PostgresError) {
+        while (this._batchQueue.hasMore) {
+            const batch = this._batchQueue.shift
+
+            while (batch.hasMore) {
+                batch.shift.reject(error)
+            }
+        }
+    }
+
+
     private _handlePacket(type: ResponseType, reader: ConnectionResponseReader) {
         switch (type) {
             case ResponseTypes.ParseComplete: {
                 reader.readParseComplete()
-                const query = this._getCurrentQuery()
-
-                this._parsingPending.delete(query.text)
-                this._parsed.set(query.text, query.statementName)
-                query.state = QueryState.Describing
             } break
 
 
             case ResponseTypes.BindComplete: {
                 reader.readBindComplete()
+                const query = this._getCurrentQuery()
+
+                if (!query.columns) {
+                    query.columns = this._parsed.get(query.text)?.columns
+                }
             } break
 
 
@@ -656,8 +625,8 @@ export class Connection {
                 reader.readNoData()
 
                 const query = this._getCurrentQuery()
-                this._describingPending.delete(query.statementName)
-                this._described.set(query.statementName, [])
+                this._parsing.delete(query.text)
+                this._parsed.set(query.text, {statement: query.statementName, columns: []})
                 query.state = QueryState.Executing
                 query.columns = []
             } break
@@ -667,8 +636,8 @@ export class Connection {
                 const columns = reader.readRowDescription()
 
                 const query = this._getCurrentQuery()
-                this._describingPending.delete(query.statementName)
-                this._described.set(query.statementName, columns)
+                this._parsing.delete(query.text)
+                this._parsed.set(query.text, {statement: query.statementName, columns: columns})
                 query.state = QueryState.Executing
                 query.columns = columns
             } break
@@ -677,11 +646,7 @@ export class Connection {
             case ResponseTypes.DataRow: {
                 let query = this._getCurrentQuery()
 
-                if (!query.columns) {
-                    query.columns = this._described.get(query.statementName)!
-                }
-
-                query.push(reader.readDataRow(query.columns, this.params.int8toBigint))
+                query.push(reader.readDataRow(query.columns!, this.params.int8toBigint))
             } break
 
 
@@ -702,9 +667,9 @@ export class Connection {
 
                 query.state = QueryState.Completed
                 
-                this._batchQueue.current.next()
-
                 query.resolve()
+                
+                this._batchQueue.current.next()
             } break
 
 
@@ -714,21 +679,14 @@ export class Connection {
                 if (this._logLevel === 'error' || this._logLevel === 'notice' || this._logLevel === 'query') {
                     console.log(`\nError:    ${error}\n`)
                 }
+
                 const query = this._getCurrentQuery()
 
-                switch (query.state) {
-                    case QueryState.Parsing:
-                        this._parsingPending.delete(query.text)
-                        break
-
-                    case QueryState.Describing:
-                        this._describingPending.delete(query.statementName)
-                        break
-                }
+                this._parsing.delete(query.text)
 
                 query.state = QueryState.Failed
 
-                this._rejectPipeline(error)
+                this._rejectCurrentBatch(error)
             } break
 
 
@@ -786,9 +744,6 @@ export class Connection {
     close() {
         this._isOpened = false
         this._socket.destroy()
-        while (this._batchQueue.hasMore) {
-            this._rejectPipeline(ErrConnectionClosed)
-            this._batchQueue.next()
-        }
+        this._rejectAllBatches(ErrConnectionClosed)
     }
 }

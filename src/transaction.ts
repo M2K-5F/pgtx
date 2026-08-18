@@ -65,7 +65,7 @@ export class Transaction {
      *   if (error) throw new Error() // Only this insert rolls back
      * });
      */
-    public savepoint<T>(name: string, callback: (tx: Transaction) => Promise<T>): Future<T, Error> {
+    public savepoint<T>(name: string, callback: (tx: Transaction) => Promise<T>) {
         this.checkActive()
 
         return Begin<PostgresError>()

@@ -6,23 +6,24 @@ import { PostgresError } from "./error";
 
 export const QueryState = {
     Parsing: 0,
-    Describing: 1,
-    Executing: 2,
-    Completed: 3,
-    Failed: 4
+    Executing: 1,
+    Completed: 2,
+    Failed: 3
 } as const
 
 
 export type State = ValueOF<typeof QueryState>
 
 
-export class Query<T> {
-    future: Future<T[], PostgresError>
-    private _resolve!: (value: T[]) => void
-    private _reject!: (error: PostgresError) => void
-    private _rows: T[] = []
+export class Query<T> extends Future<T[], PostgresError> {
+    static get [Symbol.species]() {
+        return Promise
+    }
 
     private _timer?: NodeJS.Timeout
+    private _rows: T[] = []
+    private _res!: (value: T[]) => void
+    private _rej!: (error: PostgresError) => void
 
     constructor(
         public text: QueryText,
@@ -30,19 +31,21 @@ export class Query<T> {
         public state: State,
         public statementName: StatementName,
         public columns?: ColumnDescription[]
-    )  {
-        const {future, reject, resolve} = Future.withResolvers<T[], PostgresError>()
-        this.future = future
-        this._resolve = resolve
-        this._reject = reject
+    ) {
+        let resolve, reject
+
+        super((res, rej) => {
+            resolve = res; reject = rej
+        })
+
+        this._rej = reject!; this._res = resolve!
     }
 
     startTimeout(timeout: number) {
         this._timer = setTimeout(() => {
-            this.reject(new PostgresError('Query timeout', '57014'))
+            this._rej(new PostgresError('Query timeout', '57014'))
         }, timeout)
     }
-
 
     setState(state: State) {
         this.state = state
@@ -52,19 +55,31 @@ export class Query<T> {
     push(value: T) {
         this._rows.push(value)
     }
+private _isSettled = false; // 🛡️ Защита от повторного/ложного вызова
 
-    
+    // ... твой конструктор ...
+
     reject(cause: PostgresError) {
+        if (this._isSettled) {
+            console.log(`[Query ] 🚨 ЛОЖНЫЙ/ПОВТОРНЫЙ REJECT! Запрос уже был завершен.`);
+            return;
+        }
+        this._isSettled = true;
         clearTimeout(this._timer)
-        this._reject(cause)
+        this._rej(cause)
     }
-
 
     resolve() {
+        if (this._isSettled) {
+            console.log(`[Query ] 🚨 ЛОЖНЫЙ/ПОВТОРНЫЙ RESOLVE! Батч пытается закрыть запрос дважды.`);
+            return;
+        }
+        this._isSettled = true;
         clearTimeout(this._timer)
-        this._resolve(this._rows)
+        this._res(this._rows)
     }
 }
+
 
 export class StreamQuery<T> {
     

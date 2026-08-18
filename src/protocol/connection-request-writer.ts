@@ -19,6 +19,9 @@ export class ConnectionRequestBuffer {
 
         if (required <= this.buffer.length) return
 
+        console.log('enshuring');
+        
+
         let newCapacity = this.buffer.length * 2
         if (newCapacity < required) {
             newCapacity = required
@@ -98,6 +101,8 @@ export class ConnectionRequestBuffer {
 
 
     endRequest() {
+        this.ensureCapacity(4)
+
         this.buffer.writeInt32BE(
             this.offset - (this.lastRequestLenByteOffset), 
             this.lastRequestLenByteOffset
