@@ -106,10 +106,7 @@ export class Connection {
         this._logLevel = logLevel
         this._socket = new SocketConnector(socket, 
             (type, _, reader) => this._handlePacket(type, reader),
-            (err) => {
-                console.log(err)
-                this._registerReconnect()
-            }
+            () => this._registerReconnect()
         )
     }
 
@@ -158,6 +155,22 @@ export class Connection {
         if (!this._isOpened) {
             batch.reject(ErrConnectionClosed)
             return
+        }
+
+        if (this._isReconnecting) {
+            this._reconnect()
+                .then(() => {
+                    this._activeBatch = null
+                    void this._restoreSubscriptions()
+
+
+                    
+                    this._socket.write(this._registerBatch().end())
+                    this._batchQueue.push(this._registerBatch())
+                })
+                .then(() => {
+                    this._isReconnecting = false
+                })
         }
 
         this._socket.write(batch.end())
@@ -481,10 +494,6 @@ export class Connection {
     private _registerReconnect() {
         if (this._isReconnecting) return
         this._isReconnecting = true
-        console.log('reconnect registered');
-        
-        this._rejectAllBatches(ErrConnectionReconnecting)
-        this._activeBatch = null 
     }
 
 
@@ -498,7 +507,6 @@ export class Connection {
     
 
     private async _reconnect() {
-        console.log('reconnecting')
 
         const socket = await createAuthorizedSocket(ConnectionRequestWriter.new(), this.params)
 
