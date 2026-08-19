@@ -1,3 +1,6 @@
+
+
+
 name: Tests
 
 on:
@@ -40,17 +43,8 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Run tests with postgres driver
+      - name: Run tests
         run: npm run testGitHub
-        env:
-          PGHOST: localhost
-          PGPORT: 5433
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: pgtx_test
-
-      - name: Run tests with pgtx driver
-        run: npm run testGitHub:pgtx
         env:
           PGHOST: localhost
           PGPORT: 5433
@@ -95,25 +89,14 @@ jobs:
         run: |
           sudo apt install wrk
 
-      - name: Run native mitata benchmark for postgres
-        run: npx tsx benchmark-postgres.ts
+      - name: Run native mitata benchmark
+        run: npx tsx benchmark.ts
         env:
           PGHOST: localhost
           PGPORT: 5433
           PGUSER: postgres
           PGPASSWORD: postgres
           PGDATABASE: pgtx_test
-          DRIVER: postgres
-
-      - name: Run native mitata benchmark for pgtx
-        run: npx tsx benchmark-pgtx.ts
-        env:
-          PGHOST: localhost
-          PGPORT: 5433
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: pgtx_test
-          DRIVER: pgtx
 
       - name: Seed database for wrk
         run: |
@@ -134,7 +117,7 @@ jobs:
           PGDATABASE: pgtx_test
           PGMAX: 10
         run: |
-          # Start both servers
+
           npx tsx server-postgresjs.ts &
           POSTGRES_PID=$!
           
