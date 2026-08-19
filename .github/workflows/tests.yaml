@@ -1,6 +1,3 @@
-
-
-
 name: Tests
 
 on:
@@ -43,8 +40,17 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Run tests
+      - name: Run tests with postgres driver
         run: npm run testGitHub
+        env:
+          PGHOST: localhost
+          PGPORT: 5433
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: pgtx_test
+
+      - name: Run tests with pgtx driver
+        run: npm run testGitHub:pgtx
         env:
           PGHOST: localhost
           PGPORT: 5433
@@ -89,14 +95,25 @@ jobs:
         run: |
           sudo apt install wrk
 
-      - name: Run native mitata benchmark
-        run: npx tsx benchmark.ts
+      - name: Run native mitata benchmark for postgres
+        run: npx tsx benchmark-postgres.ts
         env:
           PGHOST: localhost
           PGPORT: 5433
           PGUSER: postgres
           PGPASSWORD: postgres
           PGDATABASE: pgtx_test
+          DRIVER: postgres
+
+      - name: Run native mitata benchmark for pgtx
+        run: npx tsx benchmark-pgtx.ts
+        env:
+          PGHOST: localhost
+          PGPORT: 5433
+          PGUSER: postgres
+          PGPASSWORD: postgres
+          PGDATABASE: pgtx_test
+          DRIVER: pgtx
 
       - name: Seed database for wrk
         run: |
@@ -117,163 +134,111 @@ jobs:
           PGDATABASE: pgtx_test
           PGMAX: 10
         run: |
-
+          # Start both servers
           npx tsx server-postgresjs.ts &
-          SERVER_PID=$!
-          sleep 3
-          
-          echo .
-          echo .
-          echo "Selecting 5 users Postgres.js (10000 conns)"
-          wrk -t2 -c10000 -d10s --latency http://localhost:3001/users
-          sleep 3
-
-          echo .
-          echo .
-          echo "Selecting 5 users Postgres.js (1000 conns)"
-          wrk -t2 -c1000 -d10s --latency http://localhost:3001/users
-          sleep 3
-
-          echo .
-          echo .
-          echo "Selecting 5 users Postgres.js (200 conns)"
-          wrk -t2 -c200 -d10s --latency http://localhost:3001/users
-          sleep 2
-
-          echo .
-          echo .
-          echo "Selecting 5 users Postgres.js (50 conns)"
-          wrk -t2 -c50 -d10s --latency http://localhost:3001/users
-          sleep 2
-
-          echo .
-          echo .
-          echo "Selecting 1 user Postgres.js (10000 conns)"
-          wrk -t2 -c10000 -d10s --latency http://localhost:3001/user
-          sleep 3
-
-          echo .
-          echo .
-          echo "Selecting 1 user Postgres.js (1000 conns)"
-          wrk -t2 -c1000 -d10s --latency http://localhost:3001/user
-          sleep 3
-
-          echo .
-          echo .
-          echo "Selecting 1 user Postgres.js (200 conns)"
-          wrk -t2 -c200 -d10s --latency http://localhost:3001/user
-          sleep 2
-
-          echo .
-          echo .
-          echo "Selecting 1 user Postgres.js (50 conns)"
-          wrk -t2 -c50 -d10s --latency http://localhost:3001/user
-          sleep 2
-
-          echo .
-          echo .
-          echo "Selecting 1 as res Postgres.js (10000 conns)"
-          wrk -t2 -c10000 -d10s --latency http://localhost:3001/simple
-          sleep 3
-
-          echo .
-          echo .
-          echo "Selecting 1 as res Postgres.js (1000 conns)"
-          wrk -t2 -c1000 -d10s --latency http://localhost:3001/simple
-          sleep 3
-
-          echo .
-          echo .
-          echo "Selecting 1 as res Postgres.js (200 conns)"
-          wrk -t2 -c200 -d10s --latency http://localhost:3001/simple
-          sleep 2
-
-          echo .
-          echo .
-          echo "Selecting 1 as res Postgres.js (50 conns)"
-          wrk -t2 -c50 -d10s --latency http://localhost:3001/simple
-          sleep 2
-
-          
-          kill -9 $SERVER_PID
-          sleep 2
+          POSTGRES_PID=$!
           
           npx tsx server-pgtx.ts &
-          SERVER_PID=$!
-          sleep 3 
+          PGTX_PID=$!
+          
+          sleep 3
 
-          echo .
-          echo .
-          echo .
+          # Test 1: Selecting 5 users (10000 conns)
+          echo "Selecting 5 users Postgres.js (10000 conns)"
+          wrk -t2 -c10000 -d10s --latency http://localhost:3001/users &
           echo "Selecting 5 users @m2k-5f/pgtx (10000 conns)"
-          wrk -t2 -c10000 -d10s --latency http://localhost:3000/users
+          wrk -t2 -c10000 -d10s --latency http://localhost:3000/users &
+          wait
           sleep 3
 
-          echo .
-          echo .
+          # Test 2: Selecting 5 users (1000 conns)
+          echo "Selecting 5 users Postgres.js (1000 conns)"
+          wrk -t2 -c1000 -d10s --latency http://localhost:3001/users &
           echo "Selecting 5 users @m2k-5f/pgtx (1000 conns)"
-          wrk -t2 -c1000 -d10s --latency http://localhost:3000/users
+          wrk -t2 -c1000 -d10s --latency http://localhost:3000/users &
+          wait
           sleep 3
 
-          echo .
-          echo .
+          # Test 3: Selecting 5 users (200 conns)
+          echo "Selecting 5 users Postgres.js (200 conns)"
+          wrk -t2 -c200 -d10s --latency http://localhost:3001/users &
           echo "Selecting 5 users @m2k-5f/pgtx (200 conns)"
-          wrk -t2 -c200 -d10s --latency http://localhost:3000/users
+          wrk -t2 -c200 -d10s --latency http://localhost:3000/users &
+          wait
           sleep 2
-          
-          echo .
-          echo .
+
+          # Test 4: Selecting 5 users (50 conns)
+          echo "Selecting 5 users Postgres.js (50 conns)"
+          wrk -t2 -c50 -d10s --latency http://localhost:3001/users &
           echo "Selecting 5 users @m2k-5f/pgtx (50 conns)"
-          wrk -t2 -c50 -d10s --latency http://localhost:3000/users
+          wrk -t2 -c50 -d10s --latency http://localhost:3000/users &
+          wait
           sleep 2
 
-          echo .
-          echo .
+          # Test 5: Selecting 1 user (10000 conns)
+          echo "Selecting 1 user Postgres.js (10000 conns)"
+          wrk -t2 -c10000 -d10s --latency http://localhost:3001/user &
           echo "Selecting 1 user @m2k-5f/pgtx (10000 conns)"
-          wrk -t2 -c10000 -d10s --latency http://localhost:3000/user
+          wrk -t2 -c10000 -d10s --latency http://localhost:3000/user &
+          wait
           sleep 3
 
-          echo .
-          echo .
+          # Test 6: Selecting 1 user (1000 conns)
+          echo "Selecting 1 user Postgres.js (1000 conns)"
+          wrk -t2 -c1000 -d10s --latency http://localhost:3001/user &
           echo "Selecting 1 user @m2k-5f/pgtx (1000 conns)"
-          wrk -t2 -c1000 -d10s --latency http://localhost:3000/user
+          wrk -t2 -c1000 -d10s --latency http://localhost:3000/user &
+          wait
           sleep 3
 
-          echo .
-          echo .
+          # Test 7: Selecting 1 user (200 conns)
+          echo "Selecting 1 user Postgres.js (200 conns)"
+          wrk -t2 -c200 -d10s --latency http://localhost:3001/user &
           echo "Selecting 1 user @m2k-5f/pgtx (200 conns)"
-          wrk -t2 -c200 -d10s --latency http://localhost:3000/user
+          wrk -t2 -c200 -d10s --latency http://localhost:3000/user &
+          wait
           sleep 2
-          
-          echo .
-          echo .
+
+          # Test 8: Selecting 1 user (50 conns)
+          echo "Selecting 1 user Postgres.js (50 conns)"
+          wrk -t2 -c50 -d10s --latency http://localhost:3001/user &
           echo "Selecting 1 user @m2k-5f/pgtx (50 conns)"
-          wrk -t2 -c50 -d10s --latency http://localhost:3000/user
+          wrk -t2 -c50 -d10s --latency http://localhost:3000/user &
+          wait
           sleep 2
 
-          echo .
-          echo .
+          # Test 9: Selecting 1 as res (10000 conns)
+          echo "Selecting 1 as res Postgres.js (10000 conns)"
+          wrk -t2 -c10000 -d10s --latency http://localhost:3001/simple &
           echo "Selecting 1 as res @m2k-5f/pgtx (10000 conns)"
-          wrk -t2 -c10000 -d10s --latency http://localhost:3000/simple
+          wrk -t2 -c10000 -d10s --latency http://localhost:3000/simple &
+          wait
           sleep 3
 
-          echo .
-          echo .
+          # Test 10: Selecting 1 as res (1000 conns)
+          echo "Selecting 1 as res Postgres.js (1000 conns)"
+          wrk -t2 -c1000 -d10s --latency http://localhost:3001/simple &
           echo "Selecting 1 as res @m2k-5f/pgtx (1000 conns)"
-          wrk -t2 -c1000 -d10s --latency http://localhost:3000/simple
+          wrk -t2 -c1000 -d10s --latency http://localhost:3000/simple &
+          wait
           sleep 3
 
-          echo .
-          echo .
+          # Test 11: Selecting 1 as res (200 conns)
+          echo "Selecting 1 as res Postgres.js (200 conns)"
+          wrk -t2 -c200 -d10s --latency http://localhost:3001/simple &
           echo "Selecting 1 as res @m2k-5f/pgtx (200 conns)"
-          wrk -t2 -c200 -d10s --latency http://localhost:3000/simple
+          wrk -t2 -c200 -d10s --latency http://localhost:3000/simple &
+          wait
           sleep 2
-          
-          echo .
-          echo .
+
+          # Test 12: Selecting 1 as res (50 conns)
+          echo "Selecting 1 as res Postgres.js (50 conns)"
+          wrk -t2 -c50 -d10s --latency http://localhost:3001/simple &
           echo "Selecting 1 as res @m2k-5f/pgtx (50 conns)"
-          wrk -t2 -c50 -d10s --latency http://localhost:3000/simple
+          wrk -t2 -c50 -d10s --latency http://localhost:3000/simple &
+          wait
           sleep 2
 
-
-          kill -9 $SERVER_PID 2>/dev/null || true
+          # Cleanup
+          kill -9 $POSTGRES_PID 2>/dev/null || true
+          kill -9 $PGTX_PID 2>/dev/null || true
