@@ -1,47 +1,20 @@
 import { Socket } from "net"
-import { nextTick } from "process"
 import { ConnectionRequestWriter } from "./protocol/connection-request-writer"
 import { createAuthorizedSocket } from "./protocol/socket-authorization"
-import { ResponseType, ResponseTypes, TransactionStatuses } from "./protocol/constants"
+import { ResponseType, ResponseTypes } from "./protocol/constants"
 import { ConnectionResponseReader } from "./protocol/connection-response-reader"
 import { compileSqlTemplate } from "./utils/template-compiler"
-import { Branded, ColumnDescription } from "./types"
+import { Branded, ChannelName, ColumnDescription, ConnectionConfig, ConnectionPartialConfig, QueryMeta, QueryText, StatementName } from "./types"
 import { Transaction } from "./transaction"
 import { SocketConnector } from "./protocol/socket-connector"
-import { Queue, RingQueue } from "./queue"
-import { ParseQuery, Query, QueryState, SimpleQuery, State, StreamQuery } from "./query"
+import { Queue } from "./queue"
+import { ParseQuery, SimpleQuery, StreamQuery } from "./query"
 import { sql } from "."
 import { Begin, Future, Ok } from 'fluent-future'
 import { ErrConnectionClosed, ErrConnectionReconnecting, PostgresError } from "./error"
 import { ReadableStreamDefaultController } from "stream/web"
 import { Batch } from "./batch"
-
-type LogLevel = "none" | "error" | "notice" | "query"
-
-export type ConnectionParams = {
-    user: string
-    password?: string
-    host: string
-    port: number
-    database: string
-    logLevel?: LogLevel,
-    int8toBigint?: boolean,
-    queryTimeout?: number
-    batchCapacity?: number,
-    flushShedule?: "nextTick" | "Immediate"
-}
-
-
-export type StatementName = Branded<string, 'StatementName'>
-
-export type QueryText = Branded<string, 'QueryText'>
-
-export type ChannelName = Branded<string, "ChannelName">
-
-export type QueryMeta = {
-    statement: StatementName
-    columns: ColumnDescription[]
-}
+import { nextTick } from "process"
 
 /**
  * Represents a single dedicated connection to the PostgreSQL database.
@@ -74,7 +47,7 @@ export type QueryMeta = {
  * ```
  */
 export class Connection {
-    private readonly params: ConnectionParams
+    private readonly config: ConnectionConfig
 
     private _activeBatch: Batch | null = null
     private _isOpened = true
@@ -82,7 +55,6 @@ export class Connection {
     private _cachedBuffer = ConnectionRequestWriter.new()
 
     private _socket: SocketConnector
-
     private _batchQueue: Queue<Batch> = new Queue()
 
     private _parsed = new Map<QueryText, QueryMeta>()
@@ -90,7 +62,6 @@ export class Connection {
 
     private _listeningCallbacks = new Map<ChannelName, Set<(payload: string) => void>>()
     private _stmtCounter = 0
-    private _logLevel: LogLevel
 
 
     private _nextStatement() {
@@ -99,12 +70,10 @@ export class Connection {
 
 
     private constructor(
+        config: ConnectionConfig,
         socket: Socket,
-        logLevel: LogLevel, 
-        params: ConnectionParams
     ) {
-        this.params = params
-        this._logLevel = logLevel
+        this.config = config
         this._socket = new SocketConnector(socket, 
             (type, _, reader) => this._handlePacket(type, reader),
             () => this._registerReconnect()
@@ -130,18 +99,27 @@ export class Connection {
      * })
      * ```
      */
-    static new(params: ConnectionParams) {
+    static new(config: ConnectionPartialConfig) {
+        const conf: ConnectionConfig = {
+            ...config,
+            logLevel: config.logLevel || 'error',
+            int8toBigint: config.int8toBigint || false,
+            queryTimeout: config.queryTimeout || 30000,
+            syncShedule: config.syncShedule || 'Immediate'
+        }
+
         const writer = ConnectionRequestWriter.new()
-        return createAuthorizedSocket(writer, params)
-            .andThen(socket => Ok(new Connection(socket, params.logLevel || 'error', params)))
+        return createAuthorizedSocket(writer, conf)
+            .andThen(socket => Ok(new Connection(conf, socket)))
     }
 
 
     private _registerBatch() {
         if (!this._activeBatch) {
             const batch = new Batch(this._cachedBuffer.clear())
-            this._activeBatch = batch
-            setImmediate(() => {
+            this._activeBatch = batch;
+
+            (this.config.syncShedule ==='Immediate' ? setImmediate : nextTick)(() => {
                 this._sync(batch)
             })
 
@@ -210,29 +188,27 @@ export class Connection {
 
         const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
         
-        if (this._logLevel === 'query') {
+        if (this.config.logLevel === 'query') {
             console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
         }
-
-        const batch = this._registerBatch()
 
         if (this._parsed.has(text)) {
             const meta = this._parsed.get(text)!
             
             const query = new SimpleQuery<T>(
-                meta.statement, text, args, meta.columns
+                meta.statement, text, args, meta.columns, this.config.queryTimeout
             )
-            batch.registerQuery(query, this.params.queryTimeout || 30000)
+            this._registerBatch().registerQuery(query)
             
             return query.future
         }
 
         if (!this._parsing.has(text)) {
-            const parseQuery = new ParseQuery(this._nextStatement(), text)
+            const parseQuery = new ParseQuery(this._nextStatement(), text, this.config.queryTimeout)
 
             this._parsing.set(text, parseQuery.future)
 
-            batch.registerQuery(parseQuery, this.params.queryTimeout || 30000)
+            this._registerBatch().registerQuery(parseQuery)
         }
 
         const future = this._parsing.get(text)!
@@ -240,9 +216,9 @@ export class Connection {
 
         return future.andThen(meta => {
             const query = new SimpleQuery<T>(
-                meta.statement, text, args, meta.columns
+                meta.statement, text, args, meta.columns, this.config.queryTimeout
             )
-            this._registerBatch().registerQuery(query, this.params.queryTimeout || 30000)
+            this._registerBatch().registerQuery(query)
             
             return query.future
         })
@@ -305,7 +281,7 @@ export class Connection {
         if (!this._isOpened) return Future.reject(ErrConnectionClosed)
         if (this._isReconnecting) return Future.reject(ErrConnectionReconnecting)
 
-        return this.query`select pg_notify(${channelName}, ${payload})`
+        return this.query`select pg_notify(${channelName}, ${payload})`.map(() => {})
     }
 
 
@@ -399,7 +375,7 @@ export class Connection {
 
         const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
         
-        if (this._logLevel === 'query') {
+        if (this.config.logLevel === 'query') {
             console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
         }
 
@@ -411,24 +387,22 @@ export class Connection {
             }
         })
 
-        const batch = this._registerBatch()
-
         if (this._parsed.has(text)) {
             const meta = this._parsed.get(text)!
             const query = new StreamQuery<T>(
-                meta.statement, text, args, controller, meta.columns
+                meta.statement, text, args, controller, meta.columns, this.config.queryTimeout
             )
-            batch.registerQuery(query, this.params.queryTimeout || 30000)
+            this._registerBatch().registerQuery(query)
             
             return stream
         }
 
         if (!this._parsing.has(text)) {
-            const parseQuery = new ParseQuery(this._nextStatement(), text)
+            const parseQuery = new ParseQuery(this._nextStatement(), text, this.config.queryTimeout)
 
             this._parsing.set(text, parseQuery.future)
 
-            batch.registerQuery(parseQuery, this.params.queryTimeout || 30000)
+            this._registerBatch().registerQuery(parseQuery)
         }
 
         const future = this._parsing.get(text)!
@@ -436,9 +410,9 @@ export class Connection {
         future
             .tap(meta => {
                 const query = new StreamQuery<T>(
-                    meta.statement, text, args, controller, meta.columns
+                    meta.statement, text, args, controller, meta.columns, this.config.queryTimeout
                 )
-                this._registerBatch().registerQuery(query, this.params.queryTimeout || 30000)
+                this._registerBatch().registerQuery(query)
             })
             .catch(err => 
                 controller.error(err)
@@ -454,27 +428,32 @@ export class Connection {
 
         const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
         
-        if (this._logLevel === 'query') {
+        if (this.config.logLevel === 'query') {
             console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
         }
 
 
-        const batch = this._registerBatch()
-
         if (this._parsed.has(text)) {
             const meta = this._parsed.get(text)!
+
             const query = new StreamQuery<T>(
-                meta.statement, text, args, controller, meta.columns
+                meta.statement, text, args, 
+                controller, meta.columns, 
+                this.config.queryTimeout
             )
-            batch.registerQuery(query, this.params.queryTimeout || 30000)
+            this._registerBatch().registerQuery(query)
         }
 
         if (!this._parsing.has(text)) {
-            const parseQuery = new ParseQuery(this._nextStatement(), text)
+            const parseQuery = new ParseQuery(
+                this._nextStatement(), 
+                text, 
+                this.config.queryTimeout
+            )
 
             this._parsing.set(text, parseQuery.future)
 
-            batch.registerQuery(parseQuery, this.params.queryTimeout || 30000)
+            this._registerBatch().registerQuery(parseQuery)
         }
 
         const future = this._parsing.get(text)!
@@ -482,9 +461,12 @@ export class Connection {
         future
             .tap(meta => {
                 const query = new StreamQuery<T>(
-                    meta.statement, text, args, controller, meta.columns
+                    meta.statement, text, args, 
+                    controller, meta.columns, 
+                    this.config.queryTimeout
                 )
-                this._registerBatch().registerQuery(query, this.params.queryTimeout || 30000)
+
+                this._registerBatch().registerQuery(query)
             })
             .catch(err => 
                 controller.error(err)
@@ -509,7 +491,7 @@ export class Connection {
 
     private async _reconnect() {
 
-        const socket = await createAuthorizedSocket(ConnectionRequestWriter.new(), this.params)
+        const socket = await createAuthorizedSocket(ConnectionRequestWriter.new(), this.config)
 
         const connector = new SocketConnector(
             socket, 
@@ -600,7 +582,7 @@ export class Connection {
             case ResponseTypes.DataRow: {
                 let query = this._getCurrentQuery() as StreamQuery<any> | SimpleQuery<any>
 
-                query.push(reader.readDataRow(query.columns!, this.params.int8toBigint))
+                query.push(reader.readDataRow(query.columns, this.config.int8toBigint))
             } break
 
 
@@ -618,7 +600,7 @@ export class Connection {
             case ResponseTypes.ErrorResponse: {
                 const error = reader.readErrorResponse()
 
-                if (this._logLevel === 'error' || this._logLevel === 'notice' || this._logLevel === 'query') {
+                if (this.config.logLevel === 'error' || this.config.logLevel === 'notice' || this.config.logLevel === 'query') {
                     console.log(`\nError:    ${error}\n`)
                 }
 
@@ -641,7 +623,7 @@ export class Connection {
             case ResponseTypes.Notice: {
                 const message = reader.readErrorResponse()
                 
-                if (this._logLevel === 'notice' || this._logLevel === 'query') {
+                if (this.config.logLevel === 'notice' || this.config.logLevel === 'query') {
                     console.log(`\nError:    ${message}\n`)
                 }
             } break

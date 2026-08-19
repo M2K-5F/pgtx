@@ -145,3 +145,4 @@ export { PgtxPool as Pool }
 
 
 export * from "./clauses"
+export * from './error'

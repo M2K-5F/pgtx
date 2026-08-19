@@ -1,7 +1,7 @@
 import { Begin, Future } from "fluent-future"
 import { IdentifierClause } from "./clauses"
 import { Connection } from "./connection"
-import { PostgresError } from "./error"
+import { ErrTransactionClosed, PostgresError } from "./error"
 
 /**
  * Represents an active SQL transaction.
@@ -20,38 +20,35 @@ export class Transaction {
     public get isActive(): boolean {
         return !this.isFinished
     }
-
-    private checkActive(): void {
-        if (this.isFinished) {
-            throw new Error("Transaction is finished")
-        }
-    }
     
     /**
      * Commits the current transaction.
      */
     public commit() {
-        this.checkActive()
+        if (this.isFinished) return Future.reject(ErrTransactionClosed)
 
         return this.conn.query`COMMIT`
             .tap(() => this.isFinished = true)
+            .map(() => {})
     }
 
     /**
      * Rolls back the current transaction.
      */
     public rollback() {
-        this.checkActive()
+        if (this.isFinished) return Future.reject(ErrTransactionClosed)
 
         return this.conn.query`ROLLBACK` 
             .tap(() => this.isFinished = true)
+            .map(() => {})
     }
     
     /**
      * Executes a query within the current transaction.
      */
     public query<T extends Record<string, any>>(strings: TemplateStringsArray, ...values: any[]) {
-        this.checkActive()
+        if (this.isFinished) return Future.reject(ErrTransactionClosed)
+
         return this.conn.query<T>(strings, ...values)
     }
 
@@ -66,7 +63,7 @@ export class Transaction {
      * });
      */
     public savepoint<T>(name: string, callback: (tx: Transaction) => Promise<T>) {
-        this.checkActive()
+        if (this.isFinished) return Future.reject(ErrTransactionClosed)
 
         return Begin<PostgresError>()
             .andThen(() =>this.conn.query`SAVEPOINT ${IdentifierClause.create(name)}`)

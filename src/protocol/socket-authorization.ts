@@ -4,23 +4,9 @@ import { calculateScramAuth, generateNonce } from "../security/sasl"
 import { SocketConnector } from "./socket-connector"
 import { AuthenticationCodes, ResponseTypes } from "./constants"
 import { encryptMd5 } from "../security/md5"
-import { PostgresError } from "../error"
+import { ErrNonceMismatch, ErrPasswordRequired, ErrSocketFailedDuringAuth, PostgresError } from "../error"
 import { Future } from "fluent-future"
-
-
-export type AuthorizationParams = {
-    host: string
-    port: number
-    user: string
-    database: string
-    password?: string
-}
-
-
-export const ErrNonceMismatch = new PostgresError("Protocol violation: server nonce doesn't match client nonce")
-export const ErrPasswordRequired = new PostgresError('The authorization method requires a password.')
-export const ErrSocketFailedDuringAuth = new PostgresError("Socket failed during auth")
-
+import { AuthorizationParams } from "../types"
 
 
 export const createAuthorizedSocket = (writer: ConnectionRequestWriter, params: AuthorizationParams) => {

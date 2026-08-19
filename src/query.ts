@@ -1,31 +1,20 @@
 import { Future } from "fluent-future";
-import { QueryMeta, QueryText, StatementName } from "./connection";
-import { ColumnDescription, ValueOF } from "./types";
+import { ColumnDescription, QueryMeta, QueryText, StatementName } from "./types";
 import { ErrQueryTimeout, PostgresError } from "./error";
 
-
-export const QueryState = {
-    Parsing: 0,
-    Executing: 1,
-    Completed: 2,
-    Failed: 3
-} as const
-
-
-export type State = ValueOF<typeof QueryState>
 
 export abstract class Query {
     protected _timer?: NodeJS.Timeout
     
     constructor(
-        public statement: StatementName
-    ) {}
-
-    startTimeout(timeout: number) {
+        public statement: StatementName,
+        timeout: number
+    ) {
         this._timer = setTimeout(() => {
             this.reject(ErrQueryTimeout)
         }, timeout)
     }
+
 
     abstract reject(cause: PostgresError): void
 
@@ -43,9 +32,10 @@ export class SimpleQuery<T> extends Query {
         statement: StatementName,
         public text: QueryText,
         public args: (string | null)[],
-        public columns: ColumnDescription[]
+        public columns: ColumnDescription[],
+        timeout: number
     )  {
-        super(statement)
+        super(statement, timeout)
 
         const {future, reject, resolve} = Future.withResolvers<T[], PostgresError>()
         this.future = future
@@ -80,8 +70,9 @@ export class ParseQuery extends Query {
     constructor(
         statement: StatementName,
         public text: QueryText,
+        timeout: number
     )  {
-        super(statement)
+        super(statement, timeout)
 
         const {future, reject, resolve} = Future.withResolvers<QueryMeta, PostgresError>()
         this.future = future
@@ -109,9 +100,10 @@ export class StreamQuery<T> extends Query {
         public text: QueryText,
         public args: (string | null)[],
         public controller: ReadableStreamDefaultController<T>,
-        public columns: ColumnDescription[]
+        public columns: ColumnDescription[],
+        timeout: number
     ) {
-        super(statement)
+        super(statement, timeout)
     }
 
 

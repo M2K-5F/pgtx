@@ -41,7 +41,6 @@ export class SocketConnector {
 
 
     write(writer: ConnectionRequestWriter) {
-        if (this._isDestroyed) throw new Error("SocketConnector is destroyed")
 
         this._socket.write(writer.asBuffer())
     }

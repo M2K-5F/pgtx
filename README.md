@@ -64,82 +64,64 @@
   - **Connection pool** — Auto-management connections with support for pipeline queries via the pool itself.
   - **Zero dependencies** — Lightweight and blazing
 
----
-
-## ⚡ Performance
-
-All benchmarks are executed on **GitHub Actions** (Ubuntu, 2 vCPUs) and are fully reproducible. Benchmark sources are included in this repository.
-
-### 1. PostgreSQL Pipeline Stress Test
-
-**3000 concurrent parameterized `SELECT` queries**
-
-* Connection pool: **10 connections**
-* Measured with **mitata**
-
-| Driver                 |     Avg Time |       Relative Speed | Memory (p75) |
-| :--------------------- | -----------: | -------------------: | -----------: |
-| **Pgtx (Pipeline)**    | **24.18 ms** | **Baseline (1.00×)** |  **≈2.5 MB** |
-| Postgres.js (Pipeline) |     83.36 ms |     **3.45× slower** |      ≈7.6 MB |
-| node-postgres (`pg`)   |    377.95 ms |    **15.63× slower** |     ≈11.4 MB |
-
-### 2. Real-World HTTP Throughput
-
-Simple `node:http` server serving a PostgreSQL-backed endpoint.
-
-Measured with:
-
-```bash
-wrk -t2 -c<N> -d10s http://localhost:3000/users
-```
-
-| Concurrent Connections |             Pgtx |  Postgres.js |   Speedup |
-| ---------------------: | ---------------: | -----------: | --------: |
-|                     50 |      5,272 req/s |  5,691 req/s |     0.93× |
-|                    200 | **12,918 req/s** |  6,724 req/s | **1.92×** |
-|                   1000 | **21,429 req/s** |  8,423 req/s | **2.54×** |
-|                  10000 | **22,486 req/s** | 12,764 req/s | **1.76×** |
-
-### Why is Pgtx fast?
-
-Pgtx is engineered for **throughput**, not for minimizing the latency of individual queries.
-
-Instead of optimizing a single request in isolation, Pgtx minimizes per-query overhead under sustained concurrent load by combining:
-
-* Pipeline query multiplexing
-* Synchronous PostgreSQL wire protocol encoding
-* Batched socket writes
-* Automatic prepared statement caching
-* Prepared statement deduplication
-* Row description caching
-* Binary protocol support
-* Zero-dependency implementation
-
-As concurrency increases, these optimizations significantly reduce protocol overhead, allowing Pgtx to scale more efficiently than traditional PostgreSQL drivers.
-
-In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memory usage** than Postgres.js while processing the same workload, reducing allocation pressure and improving sustained throughput under heavy load.
-
-> **Blazing** isn't just a tagline — it's backed by reproducible benchmarks.
-
----
-
-  ## 🔥 Why Pgtx?
-
-  | Capability                          | **Pgtx** | **Postgres.js** | **pg** |
-  | -------------------------------- | :------: | :-------------: | :----: |
-  | Pipeline queries                 |     ✅    |        ✅        |    ❌   |
-  | Pipeline multiplexing in pool    |     ✅    |        ❌        |    ❌   |
-  | Tagged template SQL              |     ✅    |        ✅        |    ❌   |
-  | Automatic prepared statements    |     ✅    |        ✅        |    ✅   |
-  | Prepared statement deduplication |     ✅    |        ❌        |    ❌   |
-  | Transactions                     |     ✅    |        ✅        |    ✅   |
-  | Savepoints                       |     ✅    |        ✅        |    ❌   |
-  | LISTEN / NOTIFY                  |     ✅    |        ✅        |    ✅   |
-  | Connection pool                  |     ✅    |        ✅        |    ✅   |
-  | Zero dependencies                |     ✅    |        ✅        |    ❌   |
-
   ---
 
+  ## ⚡ Performance
+
+  All benchmarks are executed on **GitHub Actions** (Ubuntu, 2 vCPUs) and are fully reproducible. Benchmark sources are included in this repository.
+
+  ### 1. PostgreSQL Pipeline Stress Test
+
+  **3000 concurrent parameterized `SELECT` queries**
+
+  * Connection pool: **10 connections**
+  * Measured with **mitata**
+
+  | Driver                 |     Avg Time |       Relative Speed | Memory (p75) |
+  | :--------------------- | -----------: | -------------------: | -----------: |
+  | **Pgtx (Pipeline)**    | **24.18 ms** | **Baseline (1.00×)** |  **≈2.5 MB** |
+  | Postgres.js (Pipeline) |     83.36 ms |     **3.45× slower** |      ≈7.6 MB |
+  | node-postgres (`pg`)   |    377.95 ms |    **15.63× slower** |     ≈11.4 MB |
+
+  ### 2. Real-World HTTP Throughput
+
+  Simple `node:http` server serving a PostgreSQL-backed endpoint.
+
+  Measured with:
+
+  ```bash
+  wrk -t2 -c<N> -d10s http://localhost:3000/users
+  ```
+
+  | Concurrent Connections |             Pgtx |  Postgres.js |   Speedup |
+  | ---------------------: | ---------------: | -----------: | --------: |
+  |                     50 |      5,272 req/s |  5,691 req/s |     0.93× |
+  |                    200 | **12,918 req/s** |  6,724 req/s | **1.92×** |
+  |                   1000 | **21,429 req/s** |  8,423 req/s | **2.54×** |
+  |                  10000 | **22,486 req/s** | 12,764 req/s | **1.76×** |
+
+  ### Why is Pgtx fast?
+
+  Pgtx is engineered for **throughput**, not for minimizing the latency of individual queries.
+
+  Instead of optimizing a single request in isolation, Pgtx minimizes per-query overhead under sustained concurrent load by combining:
+
+  * Pipeline query multiplexing
+  * Synchronous PostgreSQL wire protocol encoding
+  * Batched socket writes
+  * Automatic prepared statement caching
+  * Prepared statement deduplication
+  * Row description caching
+  * Binary protocol support
+  * Zero-dependency implementation
+
+  As concurrency increases, these optimizations significantly reduce protocol overhead, allowing Pgtx to scale more efficiently than traditional PostgreSQL drivers.
+
+  In the `mitata` benchmark, Pgtx also demonstrated approximately **2× lower memory usage** than Postgres.js while processing the same workload, reducing allocation pressure and improving sustained throughput under heavy load.
+
+  > **Blazing** isn't just a tagline — it's backed by reproducible benchmarks.
+
+---
 
   ## 📖 Features
 
@@ -167,9 +149,9 @@ In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memo
   ```typescript
   // 5 queries, only 2 network round-trips
   const {user, posts, ...data} = await Bind({
-    user: () => pool.query<User>`...`,
-    config: () => pool.query<Config>`...`,
-    announcements: () => pool.query<Announcement>`...`
+    user: pool.query<User>`...`,
+    config: pool.query<Config>`...`,
+    announcements: pool.query<Announcement>`...`
   })
   .bind({
     posts: ({ user }) => pool.query<Post>`...`,
@@ -452,26 +434,28 @@ In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memo
   ###  Connection 
   ```typescript
   class Connection {
-      static new(params: ConnectionParams): Promise<Connection>
+      static new(params: ConnectionPartialParams): Promise<Connection>
 
       query<T>(strings: TemplateStringsArray, ...values: any[]): Future<T[], PostgresError>
-      begin<T>(callback: (tx: Transaction) => Promise<T>): Future<T, Error>
-      notify(channelName: string, payload?: string): Future<[], PostgresError>
-      listen(channelName: string, callback: (payload: string) => void): Future<[], PostgresError>
-      unlisten(channelName: string, callback: (payload: string) => void): Future<[], PostgresError>
+      begin<T>(callback: (tx: Transaction) => Promise<T>): Future<T, unknown>
+      notify(channelName: string, payload?: string): Future<void, PostgresError>
+      listen(channelName: string, callback: (payload: string) => void): Future<void, PostgresError>
+      unlisten(channelName: string, callback: (payload: string) => void): Future<void, PostgresError>
       stream<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]): ReadableStream<T>
       get isAlive(): boolean
       close(): void
   }
 
-  interface ConnectionParams {
-      user: string
-      password?: string
-      host: string
-      port: number
-      database: string
-      queryTimeout?: number // default: 30 srconds
-      logLevel?: 'none' | 'error' | 'notice' | 'query' // default: "error"
+  interface ConnectionPartialParams {
+    user: string
+    password?: string
+    host: string
+    port: number
+    database: string
+    logLevel?: LogLevel, // default "error"
+    int8toBigint?: boolean, // default false
+    queryTimeout?: number // default 30000 (30 seconds)
+    syncShedule?: "Tick" | "Immediate" // default "Immediate"
   }
   ```
 
@@ -479,14 +463,14 @@ In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memo
 
   ```typescript
   class Pool {
-      constructor(config: PoolConfig)
+      constructor(config: PoolPartialConfig)
 
       query<T>(strings: TemplateStringsArray, ...values: any[]): Future<T[], PostgresError>
-      begin<T>(callback: (tx: Transaction) => Promise<T>): Future<T, Error>
-      notify(channelName: string, payload?: string): Future<[], PostgresError>
-      listen(channel: string, callback: (payload: string) => void): Future<() => Promise<void>, PostgresError>
+      begin<T>(callback: (tx: Transaction) => Promise<T>): Future<T, unknown>
+      notify(channelName: string, payload?: string): Future<void, PostgresError>
+      listen(channel: string, callback: (payload: string) => void): Future<() => Future<void, PostgresError>, PostgresError>
       stream<T extends Record<string, any>>(templates: TemplateStringsArray, ...args: any[]): ReadableStream<T>
-      withAcquire<T>(fn: (conn: Connection) => Promise<T>): Future<T, Error>
+      withAcquire<T>(fn: (conn: Connection) => Promise<T>): Future<T, unknown>
       acquire(): Future<Connection, PostgresError>
       release(conn: Connection): void
       close(): void
@@ -495,7 +479,7 @@ In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memo
       get total(): number
   }
 
-  interface PoolConfig extends ConnectionParams {
+  interface PoolPartialConfig extends ConnectionPartialConfig {
       max?: number
   }
   ```
@@ -505,9 +489,9 @@ In the `mitata` benchmark, Pgtx also demonstrated approximately **3× lower memo
   ```typescript
   class Transaction {
     query<T>(strings: TemplateStringsArray, ...values: any[]): Future<T[], PostgresError>
-    commit(): Future<[], PostgresError>
-    rollback(): Future<[], PostgresError>
-    savepoint<T>(name: string, callback: (tx: Transaction) => Promise<T>): Future<T, Error>
+    commit(): Future<void, PostgresError>
+    rollback(): Future<void, PostgresError>
+    savepoint<T>(name: string, callback: (tx: Transaction) => Promise<T>): Future<T, unknown>
 
     get isActive(): boolean
   }

@@ -1,10 +1,10 @@
+import { Connection } from "./connection"
+import { PostgresError } from "./error"
 import { DataTypeOid } from "./protocol/constants"
 
-export type PreparedStatement<TResult extends any, Tparams extends any[]> = {
-    text: string, 
-    name: string,
-    execute: (...args: Tparams) => Promise<TResult[]>
-}
+export type Branded<T, Brand> = T & {__brand: Brand}
+
+export type ValueOF<T extends Record<string, unknown>> = T[keyof T]
 
 export type CompiledSqlQuery = {
     text: string, 
@@ -16,17 +16,70 @@ export type ClauseStrategyParams = {
     args: any[],
 }
 
-export type CompileSQLParams = {
-    templates: TemplateStringsArray,
-    args: any[],
-}
-
-
 export type ColumnDescription = {
     name: string
     typeOID: DataTypeOid
 }
 
-export type Branded<T, Brand> = T & {__brand: Brand}
+export type AuthorizationParams = {
+    host: string
+    port: number
+    user: string
+    database: string
+    password?: string
+}
 
-export type ValueOF<T extends Record<string, unknown>> = T[keyof T]
+
+type LogLevel = "none" | "error" | "notice" | "query"
+
+export type ConnectionPartialConfig = {
+    user: string
+    password?: string
+    host: string
+    port: number
+    database: string
+    logLevel?: LogLevel,
+    int8toBigint?: boolean,
+    queryTimeout?: number
+    syncShedule?: "Tick" | "Immediate"
+}
+
+
+export type ConnectionConfig = {
+    user: string
+    password?: string
+    host: string
+    port: number
+    database: string
+    logLevel: LogLevel,
+    int8toBigint: boolean,
+    queryTimeout: number
+    syncShedule: "Tick" | "Immediate"
+}
+
+
+export type StatementName = Branded<string, 'StatementName'>
+
+export type QueryText = Branded<string, 'QueryText'>
+
+export type ChannelName = Branded<string, "ChannelName">
+
+export type QueryMeta = {
+    statement: StatementName
+    columns: ColumnDescription[]
+}
+
+
+export type PoolPartialConfig = ConnectionPartialConfig & {
+    max?: number
+}
+
+export type PoolConfig = ConnectionPartialConfig & {
+    max: number
+}
+
+
+export type Waiter = {
+    resolve: (conn: Connection) => void
+    reject: (err: PostgresError) => void
+}

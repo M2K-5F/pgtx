@@ -1,23 +1,10 @@
-import { Connection, ConnectionParams } from "./connection"
+import { Connection } from "./connection"
 import { Transaction } from "./transaction"
 import { Queue, RingQueue } from "./queue";
-import { log } from "console";
 import { Begin, Future, Ok } from "fluent-future";
-import { PostgresError } from "./error";
+import { ErrPoolClosed, PostgresError } from "./error";
+import { PoolConfig, PoolPartialConfig, Waiter } from "./types";
 
-
-type PoolParams = ConnectionParams & {
-    max?: number
-}
-
-
-const ErrPoolClosed = new PostgresError('Pool closed')
-
-
-type Waiter = {
-    resolve: (conn: Connection) => void
-    reject: (err: PostgresError) => void
-}
 
 /**
  * The main entry point for Pgtx. 
@@ -56,20 +43,15 @@ type Waiter = {
  */
 export class Pool {
     private _available: RingQueue<Connection>
-    private _config: ConnectionParams
-    private _max: number
+    private config: PoolConfig
     private _total = 0
     private _waiting = new Queue<Waiter>()
-    private _isClosed = false
+    private _isOpened = true
 
-    private _checkClosed() {
-        if (this._isClosed) throw new Error('Pool closed')
-    }
-
-    constructor(params: PoolParams) {
-        this._config = params
-        this._max = params.max || 20
-        this._available = new RingQueue(this._max)
+    constructor(config: PoolPartialConfig) {
+        const conf: PoolConfig =  {...config, max: config.max || 20}
+        this.config = conf
+        this._available = new RingQueue(this.config.max)
     }
 
 
@@ -92,7 +74,7 @@ export class Pool {
      * ```
      */
     acquire() {       
-        this._checkClosed()
+        if (!this._isOpened) return Future.reject(ErrPoolClosed)
 
         while (this._available.hasMore) {
             const conn = this._available.shift
@@ -103,9 +85,9 @@ export class Pool {
             this._total--
         }
 
-        if (this._total < this._max) {
+        if (this._total < this.config.max) {
             this._total++
-            return Connection.new(this._config)
+            return Connection.new(this.config)
                 .tapErr(() => this._total--)
             
         }
@@ -165,7 +147,7 @@ export class Pool {
      * ```
      */
     release(conn: Connection) {
-        this._checkClosed()
+        if (!this._isOpened) throw ErrPoolClosed
 
         if (!conn.isOpened) {
             this._total--
@@ -200,8 +182,6 @@ export class Pool {
      * ```
      */
     begin<T>(txCallback: (transaction: Transaction) => Promise<T>) {
-        this._checkClosed()
-
         return Begin()
             .andThen(() => this.acquire())
             .andThen(conn => 
@@ -234,8 +214,8 @@ export class Pool {
      * const users = await pool.query<User>`SELECT * FROM users`
      * ```
      */
-    query<T extends Record<string, any>>(templates: TemplateStringsArray, ...args: any[]) {  
-        this._checkClosed()
+    query<T extends Record<string, any>>(templates: TemplateStringsArray, ...args: any[]) {
+        if (!this._isOpened) return Future.reject(ErrPoolClosed)
 
         while (this._available.hasMore) {
             const conn = this._available.shift
@@ -283,7 +263,7 @@ export class Pool {
      * }
      */
     stream<T extends Record<string, any>>(templates: TemplateStringsArray, ...args: any[]): ReadableStream<T> {  
-        this._checkClosed()
+        if (!this._isOpened) throw ErrPoolClosed
 
         while (this._available.hasMore) {
             const conn = this._available.shift
@@ -330,7 +310,10 @@ export class Pool {
      * ```
      */
     notify(channelName: string, payload: string = "") {
-        return this.query`select pg_notify(${channelName}, ${payload})` as Future<[], PostgresError>
+        return this.acquire()
+            .andThen(conn => conn.notify(channelName, payload)    
+                .finally(() => this.release(conn))
+            )
     }
 
 
@@ -362,10 +345,10 @@ export class Pool {
         return this.acquire()
             .andThen(conn => 
                 conn.listen(channel, callback)
-                    .map(() => async () => {
-                        await conn.unlisten(channel, callback)
-                        this.release(conn)
-                    })
+                    .map(() => () => 
+                        conn.unlisten(channel, callback)
+                            .tap(() => this.release(conn))
+                    )
             )
     }
 
@@ -399,6 +382,8 @@ export class Pool {
      * ```
      */
     close() {
+        this._isOpened = false
+
         while (this._available.hasMore) {
             this._available.shift.close()
         }

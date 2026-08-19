@@ -1,11 +1,11 @@
 import { AuthenticationCode, DataTypeOid, DataTypeOids, ResponseType, TransactionStatus } from "./constants"
-import { ColumnDescription } from "../types"
+import { ChannelName, ColumnDescription } from "../types"
 import { PostgresError } from "../error"
-import { ChannelName } from "../connection"
 
 
 const columnValueCache = new Map<number, Map<number, string>>()
 const POSTGRES_EPOCH_MS = 946684800000
+
 
 export class ConnectionResponseBuffer {
     private caret = 0
@@ -186,7 +186,6 @@ export class ConnectionResponseBuffer {
 
 
 export class ConnectionResponseReader {
-    private currentPacketLength = 0; 
 
     private constructor(
         private buffer: ConnectionResponseBuffer
@@ -318,7 +317,7 @@ export class ConnectionResponseReader {
     }
 
 
-    readDataRow(descriptions: ColumnDescription[], int8toBigint: boolean = false): Record<string, any> {
+    readDataRow(descriptions: ColumnDescription[], int8toBigint: boolean): Record<string, any> {
         const fieldsCount = this.buffer.readInt16()
         const row: Record<string, any> = {}
 

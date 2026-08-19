@@ -43,7 +43,15 @@ export class PostgresError extends Error {
     }
 }
 
+export const ErrNonceMismatch = new PostgresError("Protocol violation: server nonce doesn't match client nonce")
+export const ErrPasswordRequired = new PostgresError('The authorization method requires a password.')
+export const ErrSocketFailedDuringAuth = new PostgresError("Socket failed during auth")
+
 export const ErrQueryTimeout = new PostgresError('Query timeout', '57014')
+
+export const ErrPoolClosed = new PostgresError("Pool is closed", 'pool_closed', '', "ERROR")
+
+export const ErrTransactionClosed = new PostgresError("Transaction closed", "transaction_closed", '', "ERROR")
 
 export const ErrConnectionClosed = new PostgresError("Connection is closed", 'connection_closed', "", "ERROR")
 export const ErrConnectionReconnecting = new PostgresError("Connection are reconnecting", "connection_reconnecting", "", "ERROR")

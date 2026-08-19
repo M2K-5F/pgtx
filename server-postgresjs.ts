@@ -12,29 +12,40 @@ const sql = postgres({
 
 const server = createServer(async (req, res) => {
   if (req.url === '/users') {
-    const targetId = Math.floor(Math.random() * 1000) + 1;
+    let counter = 0
+    const base = Math.floor(Math.random() * 1000) + 1
+    const targetIds = Array.from({ length: 5 }, (_, i) => (base < 950 ? base : 950) + i).sort((a,b)=>a-b)
 
-    const [user] = await sql`
-      SELECT id, name, balance FROM bench_users WHERE id = ${targetId}
-    `
-    .catch((err) => {
-      return [null]
+    const users = await sql`
+      SELECT id, name, balance 
+      FROM bench_users 
+      WHERE id = ANY(${targetIds})
+      order by id
+    `.catch(err => {
+      console.log(err)
+      
+      return null
     })
-
-    if (!user) {
-      res.writeHead(504, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ error: 'Timeout' }))
+  
+      
+    if (!users) {
+      res.writeHead(500, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'Error' }))
       return
     }
 
-    if (user.id !== targetId) {
-      res.writeHead(500, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ error: 'Ужасающе' }))
-      return
+    for (const user of users) {
+      if (user.id !== targetIds[counter++]) {
+        console.log(users, targetIds);
+        
+        res.writeHead(500, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'Id mismatch' }))
+        return
+      }
     }
 
     res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify(user))
+    res.end(JSON.stringify(users))
     return
   }
 
@@ -42,6 +53,6 @@ const server = createServer(async (req, res) => {
   res.end()
 });
 
-server.listen(3001, () => {
+server.listen(3000, () => {
   console.log('Postgres.js Server running on http://localhost:3000');
 });

@@ -1,7 +1,6 @@
-import { QueryText, StatementName } from "./connection";
 import { PostgresError } from "./error";
 import { ConnectionRequestWriter } from "./protocol/connection-request-writer";
-import { ParseQuery, PostgresQuery, Query, StreamQuery } from "./query";
+import { ParseQuery, PostgresQuery } from "./query";
 import { Queue } from "./queue";
 
 export class Batch {
@@ -13,9 +12,8 @@ export class Batch {
         this._buffer = buffer
     }
 
-    registerQuery(query: PostgresQuery, timeout: number) {
+    registerQuery(query: PostgresQuery) {
         this._queryQueue.push(query)
-        query.startTimeout(timeout)
 
         if (query instanceof ParseQuery) {
             this._buffer
