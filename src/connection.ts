@@ -140,16 +140,12 @@ export class Connection {
             this._reconnect()
                 .then(() => {
                     this._activeBatch = null
-                    void this._restoreSubscriptions()
-
-
-                    
-                    this._socket.write(this._registerBatch().end())
-                    this._batchQueue.push(this._registerBatch())
-                })
-                .then(() => {
                     this._isReconnecting = false
                 })
+                .then(() => {
+                    void this._restoreSubscriptions()
+                })
+            return
         }
 
         this._socket.write(batch.end())
@@ -414,7 +410,7 @@ export class Connection {
                 )
                 this._registerBatch().registerQuery(query)
             })
-            .catch(err => 
+            .tapErr(err => 
                 controller.error(err)
             )
         
@@ -442,6 +438,7 @@ export class Connection {
                 this.config.queryTimeout
             )
             this._registerBatch().registerQuery(query)
+            return
         }
 
         if (!this._parsing.has(text)) {
@@ -468,7 +465,7 @@ export class Connection {
 
                 this._registerBatch().registerQuery(query)
             })
-            .catch(err => 
+            .tapErr(err => 
                 controller.error(err)
             )
     }
@@ -606,8 +603,9 @@ export class Connection {
 
                 const query = this._getCurrentQuery()
 
-                this._parsing.delete(query.text)
-
+                if (query instanceof ParseQuery) {
+                    this._parsing.delete(query.text)
+                }
 
                 this._batchQueue.current.reject(error)
             } break
