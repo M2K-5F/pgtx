@@ -14,7 +14,7 @@ import { Begin, Future, Ok } from 'fluent-future'
 import { ErrConnectionClosed, ErrConnectionReconnecting, PostgresError } from "./error"
 import { ReadableStreamDefaultController } from "stream/web"
 import { Batch } from "./batch"
-import { nextTick } from "process"
+import { nextTick, threadCpuUsage } from "process"
 
 /**
  * Represents a single dedicated connection to the PostgreSQL database.
@@ -145,6 +145,7 @@ export class Connection {
                 .then(() => {
                     void this._restoreSubscriptions()
                 })
+                .catch(() => this.close())
             return
         }
 
@@ -413,6 +414,7 @@ export class Connection {
             .tapErr(err => 
                 controller.error(err)
             )
+            .recover()
         
         return stream
     }
@@ -454,7 +456,7 @@ export class Connection {
         }
 
         const future = this._parsing.get(text)!
-
+        
         future
             .tap(meta => {
                 const query = new StreamQuery<T>(
@@ -465,9 +467,10 @@ export class Connection {
 
                 this._registerBatch().registerQuery(query)
             })
-            .tapErr(err => 
+            .tapErr(err => {                
                 controller.error(err)
-            )
+            })
+            .recover()
     }
 
     
