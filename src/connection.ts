@@ -14,7 +14,14 @@ import { Begin, Future, Ok } from 'fluent-future'
 import { ErrConnectionClosed, ErrConnectionReconnecting, PostgresError } from "./error"
 import { ReadableStreamDefaultController } from "stream/web"
 import { Batch } from "./batch"
-import { nextTick, threadCpuUsage } from "process"
+import { nextTick } from "process"
+
+
+const shedule = {
+    Immediate: setImmediate,
+    afterMicrotask: setTimeout,
+    beforeMicrotask: nextTick
+}
 
 /**
  * Represents a single dedicated connection to the PostgreSQL database.
@@ -105,7 +112,7 @@ export class Connection {
             logLevel: config.logLevel || 'error',
             int8toBigint: config.int8toBigint || false,
             queryTimeout: config.queryTimeout || 30000,
-            syncShedule: config.syncShedule || 'Immediate'
+            syncShedule: config.syncShedule || 'afterMicrotask'
         }
 
         const writer = ConnectionRequestWriter.new()
@@ -119,9 +126,7 @@ export class Connection {
             const batch = new Batch(this._cachedBuffer.clear())
             this._activeBatch = batch;
 
-            (this.config.syncShedule ==='Immediate' ? setImmediate : nextTick)(() => {
-                this._sync(batch)
-            })
+            shedule[this.config.syncShedule](() => this._sync(batch))
 
             return batch
         }

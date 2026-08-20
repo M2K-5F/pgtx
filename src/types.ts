@@ -41,7 +41,7 @@ export type ConnectionPartialConfig = {
     logLevel?: LogLevel,
     int8toBigint?: boolean,
     queryTimeout?: number
-    syncShedule?: "Tick" | "Immediate"
+    syncShedule?: "beforeMicrotask" | "afterMicrotask" | "Immediate"
 }
 
 
@@ -54,7 +54,7 @@ export type ConnectionConfig = {
     logLevel: LogLevel,
     int8toBigint: boolean,
     queryTimeout: number
-    syncShedule: "Tick" | "Immediate"
+    syncShedule: "beforeMicrotask" | "afterMicrotask" | "Immediate"
 }
 
 

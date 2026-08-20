@@ -455,7 +455,7 @@
     logLevel?: LogLevel, // default "error"
     int8toBigint?: boolean, // default false
     queryTimeout?: number // default 30000 (30 seconds)
-    syncShedule?: "Tick" | "Immediate" // default "Immediate"
+    syncShedule?: "beforeMicrotask" | "afterMicrotask" | "Immediate" // default "afterMicrotask"
   }
   ```
 
