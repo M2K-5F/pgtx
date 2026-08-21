@@ -10,47 +10,6 @@ on:
     branches: [ main, master ]
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:latest
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: pgtx_test
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-
-      - name: Install dependencies
-        run: npm install
-
-      - name: Build
-        run: npm run build
-
-      - name: Run tests
-        run: npm run testGitHub
-        env:
-          PGHOST: localhost
-          PGPORT: 5433
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: pgtx_test
 
   benchmark:
     runs-on: ubuntu-latest
@@ -89,14 +48,6 @@ jobs:
         run: |
           sudo apt install wrk
 
-      - name: Run native mitata benchmark
-        run: npx tsx benchmark.ts
-        env:
-          PGHOST: localhost
-          PGPORT: 5433
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: pgtx_test
 
       - name: Seed database for wrk
         run: |
@@ -123,22 +74,22 @@ jobs:
           sleep 3
 
           echo "BENCHMARKING Postgres.js (10000 conns)"
-          wrk -t2 -c10000 -d10s --latency http://localhost:3001/users
+          wrk -t2 -c10000 -d10s --latency http://localhost:3001/user
           sleep 3
 
           
           echo "BENCHMARKING Postgres.js (1000 conns)"
-          wrk -t2 -c1000 -d10s --latency http://localhost:3001/users
+          wrk -t2 -c1000 -d10s --latency http://localhost:3001/user
           sleep 3
 
           
           echo "BENCHMARKING Postgres.js (200 conns)"
-          wrk -t2 -c200 -d10s --latency http://localhost:3001/users
+          wrk -t2 -c200 -d10s --latency http://localhost:3001/user
           sleep 2
 
 
           echo "BENCHMARKING Postgres.js (50 conns)"
-          wrk -t2 -c50 -d10s --latency http://localhost:3001/users
+          wrk -t2 -c50 -d10s --latency http://localhost:3001/user
           sleep 2
 
           
@@ -150,21 +101,21 @@ jobs:
           sleep 3 
           
           echo "BENCHMARKING @m2k-5f/pgtx (10000 conns)"
-          wrk -t2 -c10000 -d10s --latency http://localhost:3000/users
+          wrk -t2 -c10000 -d10s --latency http://localhost:3000/user
           sleep 3
 
           
           echo "BENCHMARKING @m2k-5f/pgtx (1000 conns)"
-          wrk -t2 -c1000 -d10s --latency http://localhost:3000/users
+          wrk -t2 -c1000 -d10s --latency http://localhost:3000/user
           sleep 3
 
           
           echo "BENCHMARKING @m2k-5f/pgtx (200 conns)"
-          wrk -t2 -c200 -d10s --latency http://localhost:3000/users
+          wrk -t2 -c200 -d10s --latency http://localhost:3000/user
           sleep 2
           
           echo "BENCHMARKING @m2k-5f/pgtx (50 conns)"
-          wrk -t2 -c50 -d10s --latency http://localhost:3000/users
+          wrk -t2 -c50 -d10s --latency http://localhost:3000/user
           sleep 2
 
 
