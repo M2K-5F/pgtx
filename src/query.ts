@@ -113,7 +113,9 @@ export class StreamQuery<T> extends Query {
 
 
     push(value: T) {
-        this.controller.enqueue(value)
+        try {
+            this.controller.enqueue(value)
+        } catch {}
     }
 
 
@@ -125,7 +127,9 @@ export class StreamQuery<T> extends Query {
 
     resolve() {
         clearTimeout(this._timer)
-        this.controller.close()
+        try {
+            this.controller.close()
+        } catch {}
     }
 }
 

@@ -46,7 +46,7 @@ test('StreamQuery - Streaming test', async () => {
     assert.strictEqual(receivedUsers[3].name, 'David')
 
     await pool.query`DROP TABLE IF EXISTS test_stream_users;`
-    pool.close()
+    await pool.close()
 })
 
 test('StreamQuery - Correct error handling', async () => {
@@ -63,7 +63,7 @@ test('StreamQuery - Correct error handling', async () => {
         assert.strictEqual(error.code, '42P01')
     }
 
-    pool.close()
+    await pool.close()
 })
 
 test('StreamQuery - Timeout test', async () => {
@@ -87,6 +87,6 @@ test('StreamQuery - Timeout test', async () => {
         assert.strictEqual(error.message, 'Query timeout')
         assert.strictEqual(error.code, '57014')
     }
-
-    pool.close()
+    
+    await pool.close()
 })

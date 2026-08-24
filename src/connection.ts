@@ -389,6 +389,7 @@ export class Connection {
 
 
     private _performReconnect() {
+        this._socket.destroy()
         this._parsed.clear()
         this._parsing.clear()
         this._activeBatch?.reject(ErrConnectionReconnecting)

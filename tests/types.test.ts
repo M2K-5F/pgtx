@@ -58,7 +58,7 @@ describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
 
     after(async () => {
         await pool.query`drop table if exists ${sql.literal(allTypesTableName)};`
-        pool.close()
+        await pool.close()
     })
 
     it("should correctly parse absolutely all specified types in binary mode", async () => {
