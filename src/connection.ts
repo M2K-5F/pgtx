@@ -199,7 +199,7 @@ export class Connection {
             const meta = this._parsed.get(text)!
             
             const query = new ExecuteQuery(
-                meta.statement, text, args, meta.columns, this.config.queryTimeout
+                meta.statement, text, args, this.config.queryTimeout
             )
             this._registerBatch().registerQuery(query)
             
@@ -208,14 +208,14 @@ export class Connection {
 
         if (this._parsing.has(text)) {
             const statement = this._parsing.get(text)!
-            const query = new ExecuteQuery(statement, text, args, null, this.config.queryTimeout)
+            const query = new ExecuteQuery(statement, text, args, this.config.queryTimeout)
 
             this._registerBatch().registerQuery(query)
 
             return query.future
         }
 
-        const query = new ExecuteQuery(this._nextStatement(), text, args, null, this.config.queryTimeout)
+        const query = new ExecuteQuery(this._nextStatement(), text, args, this.config.queryTimeout)
 
         this._parsing.set(text, query.statement)
         this._registerBatch().registerParse(query)
@@ -443,6 +443,10 @@ export class Connection {
 
                 const query = this._getCurrentQuery()
 
+                if (query instanceof ExecuteQuery) {
+                    break
+                }
+
                 if (!query.columns) {
                     query.columns = this._parsed.get(query.text)!.columns
                 }
@@ -490,6 +494,11 @@ export class Connection {
 
             case ResponseTypes.DataRow: {
                 let query = this._getCurrentQuery()
+
+                if (query instanceof ExecuteQuery) {
+                    reader.skip(length - 4)
+                    break
+                }
 
                 query.push(reader.readDataRow(query.columns!, this.config.int8toBigint))
             } break

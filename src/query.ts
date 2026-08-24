@@ -21,8 +21,6 @@ export abstract class Query {
     abstract reject(cause: PostgresError): void
 
     abstract resolve(...args: any[]): void
-
-    abstract push(...args: any[]): void
 }
 
 
@@ -74,7 +72,6 @@ export class ExecuteQuery extends Query {
         statement: StatementName,
         text: QueryText,
         args: (string | null)[],
-        public columns: ColumnDescription[] | null,
         timeout: number
     ) {
         super(statement, text, args, timeout)
@@ -94,8 +91,6 @@ export class ExecuteQuery extends Query {
         clearTimeout(this._timer)
         this._resolve()
     }
-
-    push(): void {}
 }
 
 

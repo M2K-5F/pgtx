@@ -25,7 +25,6 @@ const pool = new Pool({
 
 const [user] = await pool.query<User>`SELECT * FROM users WHERE id = ${1}`
 
-// returns rows → query, doesn't → execute
 await pool.execute`
   INSERT INTO users ${sql.insert([{ name: 'Alice', age: 25 }, { name: 'Bob', age: 30 }])}
 `
@@ -38,28 +37,30 @@ await pool.begin(async tx => {
 
 That's most of what you need to know to use it. The rest of this document is for when you want to know *why* it's fast, or you need one of the sharper tools.
 
-## Numbers, since it's the first thing everyone asks
+## Benchmarks
 
 Benchmarks run on GitHub Actions (Ubuntu, 2 vCPUs), reproducible, sources in this repo. Take CI numbers with the usual grain of salt — noisy neighbors and all that — but the gap is wide enough that it holds.
 
-**3000 concurrent parameterized SELECTs, pool of 10, measured with mitata:**
+**8192 concurrent parameterized SELECTs, measured with mitata:**
 
 | Driver | Avg time | Relative | Memory (p75) |
 |---|---:|---:|---:|
-| Pgtx | **24.18 ms** | 1.00× | ≈4.5 MB |
-| Postgres.js | 83.36 ms | 3.45× slower | ≈7.6 MB |
-| node-postgres (`pg`) | 377.95 ms | 15.63× slower | ≈11.4 MB |
+| Pgtx | **69.23 ms** | 1.00× | ≈10.00 MB |
+| Postgres.js | 201.69 ms | 2.91× slower | ≈12.25 MB |
+| node-postgres (`pg`) | 738.97 ms | 10.67× slower | ≈12.74 MB |
 
 **Real HTTP throughput, `node:http` serving a PG-backed route, `wrk`:**
 
 | Concurrency | Pgtx | Postgres.js | Speedup |
 |---:|---:|---:|---:|
-| 50 | 5,272 req/s | 5,691 req/s | 0.93× |
-| 200 | **12,918 req/s** | 6,724 req/s | 1.92× |
-| 1000 | **21,429 req/s** | 8,423 req/s | 2.54× |
-| 10000 | **22,486 req/s** | 12,764 req/s | 1.76× |
+| 50 | **13,575 req/s** | 5,507 req/s | 2.47× |
+| 200 | **18,431 req/s** | 6,640 req/s | 2.78× |
+| 1000 | **16,992 req/s** | 8,099 req/s | 2.10× |
+| 10000 | **17,700 req/s** | 10,414 req/s | 1.70× |
 
-At low concurrency Pgtx is roughly a wash with Postgres.js — pipelining has nothing to multiplex yet. The gap opens up as soon as there's real contention, which is the only regime that matters in production.
+(`/users` route — `SELECT` returning 5 rows, single connection pool, 2 wrk threads, 10s runs)
+
+The gap is widest at low-to-mid concurrency, where per-request overhead dominates; it narrows past ~10k concurrent connections as both drivers start hitting OS/socket limits rather than protocol overhead.
 
 **How:** everything you fire concurrently against the same connection gets folded into one pipelined write — Parse/Bind/Execute for every query in the batch goes out in a single `socket.write()`, and results get demuxed as they come back, in order, without buffering rows you haven't asked for yet. Prepared statements are cached and deduplicated automatically, row descriptions are cached alongside them, and the binary protocol skips text (de)serialization where it can. None of this requires you to change how you write queries.
 
@@ -151,7 +152,11 @@ await pool.execute`INSERT INTO users ${sql.insert(users)}`
 
 // dynamic SET clause
 await pool.execute`UPDATE users SET ${sql.update({ status: 'active', last_login: new Date() })} WHERE id = ${userId}`
+```
 
+Rule of thumb: `execute` when you don't need rows back, `query` when you do — same rule as the raw driver, `sql.*` doesn't change it.
+
+```typescript
 // composable fragments
 const filter = sql.fragment`status = ${'active'} AND age > ${21}`
 await pool.query`SELECT * FROM users WHERE ${filter}`
@@ -275,4 +280,8 @@ Not an ORM. No migrations, no model layer, no query builder that hides SQL from 
 
 MIT © [M2K-5F](https://github.com/M2K-5F)
 
+---
+
 **Made with ❤️ and a bit of insanity**
+
+*Manufactured under license by the **Blazing Corporation**. Side effects may include throughput.*
