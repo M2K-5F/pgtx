@@ -1,528 +1,278 @@
-  ## 🚀 Pgtx
+# Pgtx
 
-  [![Tests](https://github.com/M2K-5F/pgtx/actions/workflows/tests.yaml/badge.svg)](https://github.com/M2K-5F/pgtx/actions/workflows/tests.yaml)
-  [![npm version](https://img.shields.io/npm/v/@m2k-5f/pgtx.svg)](https://www.npmjs.com/package/@m2k-5f/pgtx)
+[![Tests](https://github.com/M2K-5F/pgtx/actions/workflows/tests.yaml/badge.svg)](https://github.com/M2K-5F/pgtx/actions/workflows/tests.yaml)
+[![npm version](https://img.shields.io/npm/v/@m2k-5f/pgtx.svg)](https://www.npmjs.com/package/@m2k-5f/pgtx)
 
-  **Blazing-fast PostgreSQL driver for Node.js.**
+A PostgreSQL driver for Node.js that pipelines everything by default, caches prepared statements without asking, and doesn't ship a single dependency.
 
-  Pipeline execution, automatic prepared statements, typed SQL, transactions, and zero dependencies.
+It exists because `pg` leaves throughput on the table and `postgres.js`, while fast, still isn't fast enough once you actually saturate a connection pool. Pgtx is built around one idea: batch what can be batched, write to the socket once, and get out of the way.
 
-  **Up to 25% faster than `Postgres.js` and 15.6× faster than `pg` in concurrent pipeline workloads.**
+```bash
+npm install @m2k-5f/pgtx
+```
 
-  ---
+## Thirty seconds
 
-  ## 📦 Installation
+```typescript
+import { sql, Pool } from "@m2k-5f/pgtx"
 
-  ```bash
-  npm install @m2k-5f/pgtx
-  # yarn add @m2k-5f/pgtx
-  # pnpm add @m2k-5f/pgtx
-  # bun add @m2k-5f/pgtx
-  ```
+const pool = new Pool({
+  host: 'localhost',
+  user: 'postgres',
+  password: 'postgres',
+  database: 'myapp'
+})
 
-  ---
-  
-  ## 🚀 Quick Start
+const [user] = await pool.query<User>`SELECT * FROM users WHERE id = ${1}`
 
-  ```typescript
-  import { sql, Pool } from "@m2k-5f/pgtx";
+// returns rows → query, doesn't → execute
+await pool.execute`
+  INSERT INTO users ${sql.insert([{ name: 'Alice', age: 25 }, { name: 'Bob', age: 30 }])}
+`
 
-  const pool = new Pool({
-    host: 'localhost',
-    user: 'postgres',
-    password: 'postgres',
-    database: 'myapp'
-  })
+await pool.begin(async tx => {
+  await tx.execute`UPDATE accounts SET balance = balance - 100 WHERE id = ${1}`
+  await tx.execute`UPDATE accounts SET balance = balance + 100 WHERE id = ${2}`
+})
+```
 
-  // Type-safe query
-  const [user] = await pool.query<User>`SELECT * FROM users WHERE id = ${1}`
+That's most of what you need to know to use it. The rest of this document is for when you want to know *why* it's fast, or you need one of the sharper tools.
 
-  // Bulk insert
-  await pool.query`
-    INSERT INTO users ${sql.insert([{ name: 'Alice', age: 25 }, { name: 'Bob', age: 30 }])}
-  `
+## Numbers, since it's the first thing everyone asks
 
-  // Transaction
-  await pool.begin(async (tx) => {
-    await tx.query`UPDATE accounts SET balance = balance - 100 WHERE id = ${1}`
-    await tx.query`UPDATE accounts SET balance = balance + 100 WHERE id = ${2}`
-  })
-  ```
+Benchmarks run on GitHub Actions (Ubuntu, 2 vCPUs), reproducible, sources in this repo. Take CI numbers with the usual grain of salt — noisy neighbors and all that — but the gap is wide enough that it holds.
 
-  ---
+**3000 concurrent parameterized SELECTs, pool of 10, measured with mitata:**
 
-  ## ✨ Features
+| Driver | Avg time | Relative | Memory (p75) |
+|---|---:|---:|---:|
+| Pgtx | **24.18 ms** | 1.00× | ≈4.5 MB |
+| Postgres.js | 83.36 ms | 3.45× slower | ≈7.6 MB |
+| node-postgres (`pg`) | 377.95 ms | 15.63× slower | ≈11.4 MB |
 
-  - **Pipeline queries** — Automatic query multiplexing over PostgreSQL pipeline protocol
-  - **Tagged templates** — Natural SQL with type safety
-  - **Native Web Streams API** — Memory-efficient data streaming via `pool.stream()`
-  - **Transactions & Savepoints** — Nested transactions with rollback
-  - **Bulk inserts** — Auto-extract columns from objects
-  - **Dynamic updates** — Generate SET clauses from objects
-  - **Recursive fragments** — Compose SQL like Lego
-  - **Prepared statements** — Automatic prepared statement caching
-  - **Connection pool** — Auto-management connections with support for pipeline queries via the pool itself.
-  - **Zero dependencies** — Lightweight and blazing
+**Real HTTP throughput, `node:http` serving a PG-backed route, `wrk`:**
 
-  ---
+| Concurrency | Pgtx | Postgres.js | Speedup |
+|---:|---:|---:|---:|
+| 50 | 5,272 req/s | 5,691 req/s | 0.93× |
+| 200 | **12,918 req/s** | 6,724 req/s | 1.92× |
+| 1000 | **21,429 req/s** | 8,423 req/s | 2.54× |
+| 10000 | **22,486 req/s** | 12,764 req/s | 1.76× |
 
-  ## ⚡ Performance
+At low concurrency Pgtx is roughly a wash with Postgres.js — pipelining has nothing to multiplex yet. The gap opens up as soon as there's real contention, which is the only regime that matters in production.
 
-  All benchmarks are executed on **GitHub Actions** (Ubuntu, 2 vCPUs) and are fully reproducible. Benchmark sources are included in this repository.
+**How:** everything you fire concurrently against the same connection gets folded into one pipelined write — Parse/Bind/Execute for every query in the batch goes out in a single `socket.write()`, and results get demuxed as they come back, in order, without buffering rows you haven't asked for yet. Prepared statements are cached and deduplicated automatically, row descriptions are cached alongside them, and the binary protocol skips text (de)serialization where it can. None of this requires you to change how you write queries.
 
-  ### 1. PostgreSQL Pipeline Stress Test
+## The parts worth knowing about
 
-  **3000 concurrent parameterized `SELECT` queries**
+### Errors you can pattern-match on
 
-  * Connection pool: **10 connections**
-  * Measured with **mitata**
+Every call returns a `Future<T[], PostgresError>` from [fluent-future](https://www.npmjs.com/package/fluent-future) instead of a bare `Promise`. `await` still works exactly like you'd expect — but you also get typed errors and a way to handle them without a `try/catch` pyramid:
 
-  | Driver                 |     Avg Time |       Relative Speed | Memory (p75) |
-  | :--------------------- | -----------: | -------------------: | -----------: |
-  | **Pgtx (Pipeline)**    | **24.18 ms** | **Baseline (1.00×)** |  **≈2.5 MB** |
-  | Postgres.js (Pipeline) |     83.36 ms |     **3.45× slower** |      ≈7.6 MB |
-  | node-postgres (`pg`)   |    377.95 ms |    **15.63× slower** |     ≈11.4 MB |
+```typescript
+const users = await pool.query<User>`SELECT * FROM users WHERE id = ${1}`
+  .recoverIf(err => err.code === '42P01', [])  // undefined_table → []
+  .recoverIf(err => err.code === '23505', [])  // unique_violation → []
+  .tapErr(err => logger.error(err))
+```
 
-  ### 2. Real-World HTTP Throughput
+### Pipelining is automatic, not opt-in
 
-  Simple `node:http` server serving a PostgreSQL-backed endpoint.
+`Bind`/`.bind` from fluent-future group independent queries into the same pipeline batch for you:
 
-  Measured with:
+```typescript
+// 5 queries, 2 round-trips
+const { user, posts, ...data } = await Bind({
+  user: pool.query<User>`...`,
+  config: pool.query<Config>`...`,
+  announcements: pool.query<Announcement>`...`
+}).bind({
+  posts: ({ user }) => pool.query<Post>`...`,
+  notifications: ({ user }) => pool.query<Notif>`...`
+})
+```
 
-  ```bash
-  wrk -t2 -c<N> -d10s http://localhost:3000/users
-  ```
+Anything you fire off in the same tick without awaiting in between ends up on the wire together.
 
-  | Concurrent Connections |             Pgtx |  Postgres.js |   Speedup |
-  | ---------------------: | ---------------: | -----------: | --------: |
-  |                     50 |      5,272 req/s |  5,691 req/s |     0.93× |
-  |                    200 | **12,918 req/s** |  6,724 req/s | **1.92×** |
-  |                   1000 | **21,429 req/s** |  8,423 req/s | **2.54×** |
-  |                  10000 | **22,486 req/s** | 12,764 req/s | **1.76×** |
+### Streaming that doesn't buffer
 
-  ### Why is Pgtx fast?
+`pool.stream()` pipes rows straight from the socket into a `ReadableStream`, no intermediate array, no GC spike from holding a million-row export in memory.
 
-  Pgtx is engineered for **throughput**, not for minimizing the latency of individual queries.
+```typescript
+for await (const log of pool.stream<Log>`SELECT * FROM application_logs WHERE level = ${'error'}`) {
+  console.log(log.timestamp, log.data)
+}
+```
 
-  Instead of optimizing a single request in isolation, Pgtx minimizes per-query overhead under sustained concurrent load by combining:
+It's a real Web Streams object, so it drops straight into an HTTP response body:
 
-  * Pipeline query multiplexing
-  * Synchronous PostgreSQL wire protocol encoding
-  * Batched socket writes
-  * Automatic prepared statement caching
-  * Prepared statement deduplication
-  * Row description caching
-  * Binary protocol support
-  * Zero-dependency implementation
-
-  As concurrency increases, these optimizations significantly reduce protocol overhead, allowing Pgtx to scale more efficiently than traditional PostgreSQL drivers.
-
-  In the `mitata` benchmark, Pgtx also demonstrated approximately **2× lower memory usage** than Postgres.js while processing the same workload, reducing allocation pressure and improving sustained throughput under heavy load.
-
-  > **Blazing** isn't just a tagline — it's backed by reproducible benchmarks.
-
----
-
-  ## 📖 Features
-
-  ### 🎯 Typed Error Handling
-
-  Pgtx queries return `Future<T, PostgresError>` from [fluent-future](https://www.npmjs.com/package/fluent-future) instead of raw `Promise<T>`. This gives you:
-
-  - **Typed errors** — `PostgresError` with `code`, `severity`, `detail`
-  - **Declarative recovery** — `.recover()`, `.recoverIf()` instead of try/catch
-  - **Chain composition** — `.andThen()`, `.orElse()`, `.tap()`, `.tapErr()`
-
-  ```typescript
-  const users = await pool.query<User>`SELECT * FROM users WHERE id = ${1}`
-    .recoverIf(err => err.code === '42P01', [])  // undefined_table → []
-    .recoverIf(err => err.code === '23505', [])  // unique_violation → []
-    .tapErr(err => logger.error(err))            // log remaining errors
-  ```
-
-  ---
-
-  ### Pipeline by Default
-
-  `Bind` and `.bind` from [fluent-future](https://www.npmjs.com/package/fluent-future) automatically multiplex independent queries over PostgreSQL pipeline protocol — no manual batching required:
-
-  ```typescript
-  // 5 queries, only 2 network round-trips
-  const {user, posts, ...data} = await Bind({
-    user: pool.query<User>`...`,
-    config: pool.query<Config>`...`,
-    announcements: pool.query<Announcement>`...`
-  })
-  .bind({
-    posts: ({ user }) => pool.query<Post>`...`,
-    notifications: ({ user }) => pool.query<Notif>`...`
-  })
-  ```
-  > 🚀 Pgtx automatically groups concurrent queries into pipeline batches, reducing network overhead by up to 5x compared to sequential queries.
-
-
-  ---
-
-
-  ### High-Performance Data Streaming (`pool.stream`)
-
-  For heavy database lookups (exporting millions of rows, bulk reports, or large analytical dumps), memory accumulation is the ultimate killer of backend stability. Storing rows in a standard JavaScript array causes massive heap pollution and triggers blocking Garbage Collection spikes.
-
-  Pgtx solves this at the protocol level by introducing `pool.stream()`, which bypasses row aggregation entirely and pipes rows transitively directly into a native Web **`ReadableStream`**.
-
-  #### 1. Ultra-Low Memory Row Iteration
-  You can consume database rows sequentially using standard `for await...of` syntax. Rows are processed and evicted from memory the moment they arrive from the network socket buffer.
-
-  ```typescript
-  interface HeavyLog { id: number; data: string; timestamp: Date; }
-
-  const logStream = pool.stream<HeavyLog>`
-    SELECT id, data, timestamp FROM application_logs WHERE level = ${'error'}
-  `;
-
-  for await (const log of logStream) {
-    // Each log object is parsed on-the-fly and processed instantly.
-    // Zero rows are accumulated in the internal driver state!
-    console.log(`[${log.timestamp.toISOString()}] ${log.data}`);
+```typescript
+export default {
+  async fetch(req) {
+    const stream = pool.stream`SELECT id, email FROM giant_user_table`
+    return new Response(stream, { headers: { "Content-Type": "application/json" } })
   }
-  ```
+}
+```
 
-  #### 2. Streaming Directly to HTTP Responses (`Bun.serve`)
-  Since Pgtx implements the standardized Web Streams API, you can bridge your database query directly into an HTTP response body with absolutely zero intermediate buffers.
+### Transactions and savepoints
 
-  ```typescript
-  import { Pool } from "@m2k-5f/pgtx";
+```typescript
+await pool.begin(async tx => {
+  await tx.execute`INSERT INTO orders (user_id) VALUES (${userId})`
 
-  const pool = new Pool({ /* ... config ... */ });
+  await tx.savepoint('reserve_stock', async stx => {
+    await stx.execute`UPDATE stock SET count = count - 1 WHERE product_id = ${productId}`
+    if (outOfStock) throw new Error('out of stock') // only the savepoint rolls back
+  }).tapErr(console.log)
+})
+```
+
+### LISTEN / NOTIFY without babysitting a connection
+
+```typescript
+await pool.notify('user_events', JSON.stringify({ id: 42, action: 'signup' }))
+
+const unlisten = await pool.listen('user_events', payload => {
+  console.log('got:', payload)
+})
+
+// later
+await unlisten() // sends UNLISTEN, hands the connection back
+```
 
-  export default {
-    port: 3000,
-    async fetch(request) {
-      const url = new URL(request.url);
-
-      if (url.pathname === "/export/users") {
-        // Synchronously returns a stream handle even if pool sockets are currently busy
-        const userStream = pool.stream`SELECT id, email, profile_metadata FROM giant_user_table`;
-
-        return new Response(userStream, {
-          headers: {
-            "Content-Type": "application/json",
-            "Transfer-Encoding": "chunked",
-          },
-        });
-      }
-
-      return new Response("Not Found", { status: 404 });
-    },
-  };
-  ```
-
-  ---
-
-  ### Transactions & Savepoints
-
-  ```typescript
-  await pool.begin(async (tx) => {
-    await tx.query`INSERT INTO orders (user_id) VALUES (${userId})`
-    
-    await tx.savepoint('update_stock', async (stx) => {
-      await stx.query`UPDATE stock SET count = count - 1 WHERE product_id = ${productId}`
-      if (outOfStock) throw new Error('out of stock') // Only savepoint rolls back
-    })
-    .tapErr(console.log) // Error: out of stock
-  })
-  ```
-
-  ---
-
-  ### Async Notifications (LISTEN / NOTIFY)
-
-  Pgtx natively handles PostgreSQL `LISTEN/NOTIFY` protocol messages asynchronously without interrupting the multiplexed query pipeline. It offers two distinct ways to subscribe: high-level pool-driven subscriptions and low-level connection pinning.
-
-  #### 1. Sending a Notification
-  Notifications are atomic and can be triggered directly from the `Pool` utilizing any available socket:
-  ```typescript
-  await pool.notify('user_events', JSON.stringify({ id: 42, action: 'signup' }))
-  ```
-
-  #### 2. High-Level Pool Subscription (Recommended)
-  You can subscribe directly via the `Pool` instance. Pgtx will automatically borrow a dedicated connection from the pool, issue the `LISTEN` command, and seamlessly manage its lifecycle. 
-
-  The method returns a lazy, async **unsubscribe function** that cleanly handles `UNLISTEN` and returns the connection to the pool when invoked.
-
-  ```typescript
-  const onEvent = (payload: string) => {
-    console.log(`Received payload: ${payload}`)
-  }
-
-  // Automatically borrows a connection and sets up the listener
-  const unsubscribe = await pool.listen('user_events', onEvent)
-
-  // When the subscription is no longer needed (e.g., server shutdown):
-  // It automatically sends UNLISTEN and releases the connection back to the pool!
-  await unsubscribe()
-  ```
-
-  #### 3. Low-Level Connection Subscription (Stateful)
-  If you need complete control over a specific PostgreSQL backend process, you can acquire an explicit `Connection` instance. This allows you to multiplex multiple callbacks onto a single channel seamlessly.
-
-  ```typescript
-  const conn = await pool.acquire()
-
-  const onEvent = (payload: string) => {
-    console.log(`Received payload: ${payload}`)
-  }
-
-  // Multiplexes multiple callbacks onto a single LISTEN command seamlessly
-  await conn.listen('user_events', onEvent)
-  await conn.listen('user_events', (data) => logToFile(data))
-
-  // Cleans up callbacks (Sends UNLISTEN only when the channel has zero callbacks left)
-  await conn.unlisten('user_events', onEvent)
-
-  // ⚠️ Manual lifecycle management is strictly required for this pattern!
-  // Do NOT release it back to the pool until you are completely done listening.
-  this.release(conn)
-  ```
-
-  > ⚠️ **Architecture Note:** While `pool.notify` is a fire-and-forget atomic command, subscription states (`LISTEN`/`UNLISTEN`) are strictly tied to specific PostgreSQL backend processes. Using the high-level `pool.listen()` is strongly recommended for application code, as it encapsulates socket management into an elegant, leak-proof callback boundary.
-
-  ---
-
-  ### Bulk Inserts
-
-  ```typescript
-  const users = [
-    { name: 'Alice', email: 'alice@test.com' },
-    { name: 'Bob', email: 'bob@test.com' }
-  ]
-
-  await pool.query`
-    INSERT INTO users ${sql.insert(users)}
-  `
-  // INSERT INTO users (name, email) VALUES ($1, $2), ($3, $4)
-  ```
-
-  ---
-
-  ### Dynamic Updates
-
-  ```typescript
-  const data = { status: 'active', last_login: new Date() }
-
-  await pool.query`
-    UPDATE users SET ${sql.update(data)} WHERE id = ${userId}
-  `
-  // UPDATE users SET status = $1, last_login = $2 WHERE id = $3
-  ```
-
-  ---
-
-  ### Recursive Fragments
-
-  ```typescript
-  const filter = sql.fragment`status = ${'active'} AND age > ${21}`
-  const subquery = sql.fragment`(SELECT id FROM roles WHERE name = ${'admin'})`
-
-  await pool.query`
-    SELECT * FROM users 
-    WHERE ${filter} AND role_id = (${subquery})
-  `
-  ```
-
-  ---
-
-  ### Smart Lists
-
-  ```typescript
-  const ids = [10, 20, 30]
-  await pool.query`
-    SELECT * FROM users WHERE id IN (${sql.array(ids)})
-  `
-  // SELECT * FROM users WHERE id IN ($1, $2, $3)
-
-  const conditions = [
-    sql.fragment`status = ${'active'}`,
-    sql.fragment`age > ${18}`
-  ]
-  await pool.query`
-    SELECT * FROM users WHERE ${sql.array(conditions, ' AND ')}
-  `
-  ```
-
-  ---
-
-  ### Clean WHERE Clauses
-
-  ```typescript
-  const filters = { role: 'admin', age: undefined, active: true }
-  await pool.query`
-    SELECT * FROM users WHERE ${sql.where(filters)}
-  `
-  // SELECT * FROM users WHERE role = $1 AND active = $2
-  ```
-
-  ---
-
-  ### Conditional Logic
-
-  ```typescript
-  const search = ""
-  await pool.query`
-    SELECT * FROM posts 
-    ${search ? sql.fragment`WHERE title ILIKE ${search}` : sql.empty}
-  `
-  ```
-
-  ---
-
-  ## 🛡️ Security
-
-  | Pattern | Protection |
-  |---------|------------|
-  | `sql.ident(name)` | Escapes identifiers: `user` → `"user"` |
-  | `sql.literal(value)` | Escapes string literals |
-  | Parameter binding | Uses native `$1, $2` placeholders |
-  | Template tags | Cannot be injected via user input |
-
-  ```typescript
-  // ✅ Safe - parameterized
-  await pool.query`SELECT * FROM users WHERE name = ${userInput}`
-
-  // ⚠️ Unsafe - raw interpolation (DON'T DO THIS)
-  await pool.query(`SELECT * FROM users WHERE name = '${userInput}'`)
-
-  // ✅ Safe - identifiers
-  await pool.query`SELECT * FROM ${sql.ident(tableName)}`
-  ```
-
-  ---
-
-  ## 📊 Null & Undefined Handling
-
-  | Value | In INSERT | In UPDATE | In VALUES | In Arrays |
-  |-------|-----------|-----------|-----------|-----------|
-  | `null` | `NULL` | `NULL` | `NULL` | `NULL` |
-  | `undefined` | `DEFAULT` | Skipped | `Error` | `Error` |
-
-
-  ```typescript
-  // undefined becomes DEFAULT
-  await pool.query`
-    INSERT INTO users ${sql.insert({ 
-      name: 'Alice', 
-      age: undefined,  // → DEFAULT
-      email: null      // → NULL
-    })}
-  `
-  // INSERT INTO users (name, age, email) VALUES ($1, DEFAULT, $2)
-
-  // undefined fields are skipped in UPDATE
-  await pool.query`
-    UPDATE users SET ${sql.update({ 
-      name: 'Bob',
-      age: undefined   // Skipped - age remains unchanged
-    })} WHERE id = 1
-  `
-  // UPDATE users SET name = $1 WHERE id = 1
-  ```
-
-  ---
-
-  ## 🔧 API Reference
-
-  ###  Connection 
-  ```typescript
-  class Connection {
-      static new(params: ConnectionPartialParams): Promise<Connection>
-
-      query<T>(strings: TemplateStringsArray, ...values: any[]): Future<T[], PostgresError>
-      begin<T>(callback: (tx: Transaction) => Promise<T>): Future<T, unknown>
-      notify(channelName: string, payload?: string): Future<void, PostgresError>
-      listen(channelName: string, callback: (payload: string) => void): Future<void, PostgresError>
-      unlisten(channelName: string, callback: (payload: string) => void): Future<void, PostgresError>
-      stream<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]): ReadableStream<T>
-      get isAlive(): boolean
-      close(): void
-  }
-
-  interface ConnectionPartialParams {
-    user: string
-    password?: string
-    host: string
-    port: number
-    database: string
-    logLevel?: LogLevel, // default "error"
-    int8toBigint?: boolean, // default false
-    queryTimeout?: number // default 30000 (30 seconds)
-    syncShedule?: "beforeMicrotask" | "afterMicrotask" | "Immediate" // default "afterMicrotask"
-  }
-  ```
-
-  ### Pool
-
-  ```typescript
-  class Pool {
-      constructor(config: PoolPartialConfig)
-
-      query<T>(strings: TemplateStringsArray, ...values: any[]): Future<T[], PostgresError>
-      begin<T>(callback: (tx: Transaction) => Promise<T>): Future<T, unknown>
-      notify(channelName: string, payload?: string): Future<void, PostgresError>
-      listen(channel: string, callback: (payload: string) => void): Future<() => Future<void, PostgresError>, PostgresError>
-      stream<T extends Record<string, any>>(templates: TemplateStringsArray, ...args: any[]): ReadableStream<T>
-      withAcquire<T>(fn: (conn: Connection) => Promise<T>): Future<T, unknown>
-      acquire(): Future<Connection, PostgresError>
-      release(conn: Connection): void
-      close(): void
-
-      get size(): number
-      get total(): number
-  }
-
-  interface PoolPartialConfig extends ConnectionPartialConfig {
-      max?: number
-  }
-  ```
-
-  ### Transaction
-
-  ```typescript
-  class Transaction {
-    query<T>(strings: TemplateStringsArray, ...values: any[]): Future<T[], PostgresError>
-    commit(): Future<void, PostgresError>
-    rollback(): Future<void, PostgresError>
-    savepoint<T>(name: string, callback: (tx: Transaction) => Promise<T>): Future<T, unknown>
-
-    get isActive(): boolean
-  }
-  ```
-
-  ### **sql** helper
-  ```typescript
-  const sql: {
-    ident<T extends string>(identificator: T): IdentifierClause<T>
-    literal<T extends string>(value: T): LiteralClause<T>
-    fragment(strings: TemplateStringsArray, ...values: any[]): FragmentClause
-    insert<T extends Record<string, any>>(...objects: NoInfer<T>[]): InsertClause<T>
-    update<T extends Record<string, any>>(object: T): UpdateClause<T>
-    where<T extends Record<string, any>>(whereMap: T): WhereClause<T>
-    excluded(fields: string[]): ExcludeUpdateClause
-    array(array: any[], separator?: string): ArrayClause
-    empty: EmptyClause
-  }
-  ```
-
-  ---
-
-
-  Pgtx is a PostgreSQL driver.
-
-  It is not an ORM. It is absolutely Blazing.
-
-  ## 📝 License
-
-  MIT © [M2K-5F](https://github.com/M2K-5F)
-
-  ---
-
-  **Made with ❤️ and a bit of insanity**
+`pool.listen` borrows a dedicated connection and manages its lifecycle for you. If you need to multiplex several callbacks onto one channel on a connection you're pinning yourself, drop down to `conn.listen`/`conn.unlisten` directly — just don't release that connection back to the pool while you're still using it for that.
+
+### Building queries without string-gluing
+
+```typescript
+// bulk insert — columns inferred from the object
+await pool.execute`INSERT INTO users ${sql.insert(users)}`
+
+// dynamic SET clause
+await pool.execute`UPDATE users SET ${sql.update({ status: 'active', last_login: new Date() })} WHERE id = ${userId}`
+
+// composable fragments
+const filter = sql.fragment`status = ${'active'} AND age > ${21}`
+await pool.query`SELECT * FROM users WHERE ${filter}`
+
+// clean WHERE from an object, undefined keys just drop out
+await pool.query`SELECT * FROM users WHERE ${sql.where({ role: 'admin', age: undefined, active: true })}`
+
+// conditional fragments
+await pool.query`SELECT * FROM posts ${search ? sql.fragment`WHERE title ILIKE ${search}` : sql.empty}`
+```
+
+`undefined` means `DEFAULT` in an insert, means "skip this field" in an update, and throws if you try to hand it to `VALUES` or an array — it's meant to be a decision point, not a silent `NULL`.
+
+## Not doing this
+
+```typescript
+// don't
+await pool.query(`SELECT * FROM users WHERE name = '${userInput}'`)
+
+// do
+await pool.query`SELECT * FROM users WHERE name = ${userInput}`
+await pool.query`SELECT * FROM ${sql.ident(tableName)}`
+```
+
+Everything that goes through a tagged template is bound as `$1, $2, ...`. There's no code path where a template value becomes raw SQL text — if you need a dynamic identifier or literal, `sql.ident`/`sql.literal` exist precisely so you're never tempted to interpolate by hand.
+
+## API
+
+### `Connection`
+
+```typescript
+class Connection {
+  static new(config: ConnectionPartialConfig): Future<Connection, PostgresError>
+
+  query<T>(strings: TemplateStringsArray, ...values: any[]): Future<T[], PostgresError>
+  execute(strings: TemplateStringsArray, ...values: any[]): Future<void, PostgresError>
+  stream<T>(strings: TemplateStringsArray, ...values: any[]): ReadableStream<T>
+  begin<T>(callback: (tx: Transaction) => Promise<T>): Future<T, unknown>
+  notify(channelName: string, payload?: string): Future<void, PostgresError>
+  listen(channelName: string, callback: (payload: string) => void): Future<void, PostgresError>
+  unlisten(channelName: string, callback: (payload: string) => void): Future<void, PostgresError>
+  close(): Future<void, PostgresError>
+
+  get isOpened(): boolean
+  get isClosed(): boolean
+}
+
+interface ConnectionPartialConfig {
+  user: string
+  password?: string
+  host: string
+  port: number
+  database: string
+  logLevel?: 'error' | 'notice' | 'query'   // default 'error'
+  int8toBigint?: boolean                     // default false
+  queryTimeout?: number                      // default 30000
+  syncShedule?: 'beforeMicrotask' | 'afterMicrotask' | 'Immediate'  // default 'afterMicrotask'
+}
+```
+
+### `Pool`
+
+```typescript
+class Pool {
+  constructor(config: PoolPartialConfig)
+
+  query<T>(strings: TemplateStringsArray, ...values: any[]): Future<T[], PostgresError>
+  execute(strings: TemplateStringsArray, ...values: any[]): Future<void, PostgresError>
+  stream<T>(strings: TemplateStringsArray, ...values: any[]): ReadableStream<T>
+  begin<T>(callback: (tx: Transaction) => Promise<T>): Future<T, unknown>
+  notify(channelName: string, payload?: string): Future<void, PostgresError>
+  listen(channel: string, callback: (payload: string) => void): Future<() => Future<void, PostgresError>, PostgresError>
+  withAcquire<T>(fn: (conn: Connection) => Promise<T>): Future<T, unknown>
+  acquire(): Future<Connection, PostgresError>
+  release(conn: Connection): void
+  close(): Future<void, PostgresError>
+
+  get size(): number
+  get total(): number
+}
+
+interface PoolPartialConfig extends ConnectionPartialConfig {
+  max?: number  // default 20
+}
+```
+
+### `Transaction`
+
+```typescript
+class Transaction {
+  query<T>(strings: TemplateStringsArray, ...values: any[]): Future<T[], PostgresError>
+  commit(): Future<void, PostgresError>
+  rollback(): Future<void, PostgresError>
+  savepoint<T>(name: string, callback: (tx: Transaction) => Promise<T>): Future<T, unknown>
+
+  get isActive(): boolean
+}
+```
+
+### `sql`
+
+```typescript
+const sql: {
+  ident<T extends string>(name: T): IdentifierClause<T>
+  literal<T extends string>(value: T): LiteralClause<T>
+  fragment(strings: TemplateStringsArray, ...values: any[]): FragmentClause
+  insert<T extends Record<string, any>>(...objects: T[]): InsertClause<T>
+  update<T extends Record<string, any>>(object: T): UpdateClause<T>
+  where<T extends Record<string, any>>(map: T): WhereClause<T>
+  excluded(fields: string[]): ExcludeUpdateClause
+  array(values: any[], separator?: string): ArrayClause
+  empty: EmptyClause
+}
+```
+
+## What this isn't
+
+Not an ORM. No migrations, no model layer, no query builder that hides SQL from you. You write SQL, Pgtx gets it to Postgres as fast as it can and gets the rows back to you with as little overhead as possible. If you want an ORM on top, Pgtx is a fine thing to put underneath one.
+
+## License
+
+MIT © [M2K-5F](https://github.com/M2K-5F)
+
+**Made with ❤️ and a bit of insanity**

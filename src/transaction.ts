@@ -2,6 +2,7 @@ import { Begin, Future } from "fluent-future"
 import { IdentifierClause } from "./clauses"
 import { Connection } from "./connection"
 import { ErrTransactionClosed, PostgresError } from "./error"
+import { Row } from "./types"
 
 /**
  * Represents an active SQL transaction.
@@ -46,10 +47,22 @@ export class Transaction {
     /**
      * Executes a query within the current transaction.
      */
-    public query<T extends Record<string, any>>(strings: TemplateStringsArray, ...values: any[]) {
+    public query<T extends Row>(strings: TemplateStringsArray, ...values: any[]) {
         if (this.isFinished) return Future.reject(ErrTransactionClosed)
 
         return this.conn.query<T>(strings, ...values)
+    }
+
+    /**
+     * Like {@link query}, but for statements that don't return rows (INSERT/UPDATE/DDL/etc).
+     *
+     * @example
+     * await tx.execute`UPDATE users SET name = ${name} WHERE id = ${id}`
+     */
+    public execute(strings: TemplateStringsArray, ...params: any[]) {
+        if (this.isFinished) return Future.reject(ErrTransactionClosed)
+
+        return this.conn.execute(strings, ...params)
     }
 
     /**

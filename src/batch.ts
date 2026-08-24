@@ -1,6 +1,6 @@
 import { PostgresError } from "./error";
 import { ConnectionRequestWriter } from "./protocol/connection-request-writer";
-import { ParseQuery, PostgresQuery } from "./query";
+import { PostgresQuery } from "./query";
 import { Queue } from "./queue";
 
 export class Batch {
@@ -12,15 +12,16 @@ export class Batch {
         this._buffer = buffer
     }
 
+
+    registerParse(query: PostgresQuery) {
+        this._buffer
+            .writeParse(query.statement, query.text)
+            .writeDescribe(query.statement)
+    }
+
+
     registerQuery(query: PostgresQuery) {
         this._queryQueue.push(query)
-
-        if (query instanceof ParseQuery) {
-            this._buffer
-                .writeParse(query.statement, query.text)
-                .writeDescribe(query.statement)
-            return
-        }
 
         this._buffer
             .writeBind("", query.statement, query.args)
@@ -40,8 +41,12 @@ export class Batch {
     }
 
     reject(cause: PostgresError) {
+        let counter = 0
         while (this._queryQueue.hasMore) {
+            counter++
             this._queryQueue.shift.reject(cause)
         }
+
+        return counter
     }
 }

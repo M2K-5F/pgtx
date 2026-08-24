@@ -1,5 +1,5 @@
 import { Future } from "fluent-future";
-import { ColumnDescription, QueryMeta, QueryText, StatementName } from "./types";
+import { ColumnDescription, QueryMeta, QueryText, Row, StatementName } from "./types";
 import { ErrQueryTimeout, PostgresError } from "./error";
 
 
@@ -8,6 +8,8 @@ export abstract class Query {
     
     constructor(
         public statement: StatementName,
+        public text: QueryText,
+        public args: (string | null)[],
         timeout: number
     ) {
         this._timer = setTimeout(() => {
@@ -19,10 +21,12 @@ export abstract class Query {
     abstract reject(cause: PostgresError): void
 
     abstract resolve(...args: any[]): void
+
+    abstract push(...args: any[]): void
 }
 
 
-export class SimpleQuery<T> extends Query {
+export class CollectQuery<T extends Row> extends Query {
     public future: Future<T[], PostgresError>
     private _resolve!: (value: T[]) => void
     private _reject!: (error: PostgresError) => void
@@ -30,12 +34,12 @@ export class SimpleQuery<T> extends Query {
 
     constructor(
         statement: StatementName,
-        public text: QueryText,
-        public args: (string | null)[],
-        public columns: ColumnDescription[],
+        text: QueryText,
+        args: (string | null)[],
+        public columns: ColumnDescription[] | null,
         timeout: number
     )  {
-        super(statement, timeout)
+        super(statement, text, args, timeout)
 
         const {future, reject, resolve} = Future.withResolvers<T[], PostgresError>()
         this.future = future
@@ -62,24 +66,23 @@ export class SimpleQuery<T> extends Query {
 }
 
 
-export class ParseQuery extends Query {
-    public future: Future<QueryMeta,  PostgresError>
-    private _resolve!: (columns: QueryMeta) => void
+export class ExecuteQuery extends Query {
+    public future: Future<void, PostgresError>
+    private _resolve!: () => void
     private _reject!: (error: PostgresError) => void
-
     constructor(
         statement: StatementName,
-        public text: QueryText,
+        text: QueryText,
+        args: (string | null)[],
+        public columns: ColumnDescription[] | null,
         timeout: number
-    )  {
-        super(statement, timeout)
+    ) {
+        super(statement, text, args, timeout)
 
-        const {future, reject, resolve} = Future.withResolvers<QueryMeta, PostgresError>()
-        this.future = future
-        this._resolve = resolve
-        this._reject = reject
-    }    
+        const {future, reject, resolve} = Future.withResolvers<void, PostgresError>()
 
+        this.future = future; this._reject = reject; this._resolve = resolve
+    }
 
     reject(cause: PostgresError) {
         clearTimeout(this._timer)
@@ -87,23 +90,25 @@ export class ParseQuery extends Query {
     }
 
 
-    resolve(meta: QueryMeta) {
+    resolve() {
         clearTimeout(this._timer)
-        this._resolve(meta)
+        this._resolve()
     }
+
+    push(): void {}
 }
 
 
 export class StreamQuery<T> extends Query {
     constructor(
         statement: StatementName,
-        public text: QueryText,
-        public args: (string | null)[],
+        text: QueryText,
+        args: (string | null)[],
         public controller: ReadableStreamDefaultController<T>,
-        public columns: ColumnDescription[],
+        public columns: ColumnDescription[] | null,
         timeout: number
     ) {
-        super(statement, timeout)
+        super(statement, text, args, timeout)
     }
 
 
@@ -124,4 +129,4 @@ export class StreamQuery<T> extends Query {
     }
 }
 
-export type PostgresQuery = SimpleQuery<any> | ParseQuery | StreamQuery<any>
+export type PostgresQuery = CollectQuery<any> | StreamQuery<any> | ExecuteQuery

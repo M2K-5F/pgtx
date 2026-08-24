@@ -20,8 +20,8 @@ describe("LISTEN / NOTIFY Async Pipeline Test", async () => {
         const channel = "test_channel_basic"
         const expectedPayload = "hello_world_pipeline"
         
-        const client = await pool.acquire();
-
+        const client = await pool.acquire()
+        
         const notificationReceived = new Promise<string>((resolve) => {
             client.listen(channel, (payload) => {
                 resolve(payload)

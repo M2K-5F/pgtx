@@ -1,3 +1,4 @@
+import { Future } from "fluent-future"
 import { Connection } from "./connection"
 import { PostgresError } from "./error"
 import { DataTypeOid } from "./protocol/constants"
@@ -82,4 +83,14 @@ export type PoolConfig = ConnectionPartialConfig & {
 export type Waiter = {
     resolve: (conn: Connection) => void
     reject: (err: PostgresError) => void
+}
+
+
+export type Row = Record<string, any>
+
+
+export type Resolvers<T extends Future<any>> = {
+    future: T
+    resolve: (value: T extends Future<infer I> ? I : never) => void
+    reject: (cause: T extends Future<any, infer E> ? E : never) => void
 }

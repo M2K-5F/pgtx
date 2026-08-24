@@ -1,0 +1,240 @@
+import { after, before, describe, it } from "node:test"
+import { Connection } from "../src/connection"
+import { ErrConnectionClosed, PostgresError } from "../src/error"
+import assert, { rejects } from "assert"
+import { Future, Ok } from "fluent-future"
+
+describe("Connection reconnect and close test", async () => {
+
+    const makeConnection = () => {
+        return Connection.new({
+            host: process.env.PGHOST || 'localhost',
+            user: process.env.PGUSER || 'postgres',
+            password: process.env.PGPASSWORD || 'postgres',
+            database: process.env.PGDATABASE || 'pgtx_test',
+            port: Number(process.env.PGPORT) || 5433
+        })
+    }
+
+    describe("Reconnect behavior", async () => {
+
+        let conn: Connection
+
+        before(async () => {
+            conn = await makeConnection()
+        })
+
+        after(async () => {
+            await conn.close()
+        })
+
+        it("should recover and serve queries after the socket is forcibly destroyed", async () => {
+            const before = await conn.query`SELECT 1 as value`
+            assert.strictEqual(before[0].value, 1)
+
+            conn['_socket'].destroy()
+
+            await new Promise(r => setTimeout(r, 500))
+
+            const after = await conn.query`SELECT 2 as value`
+            assert.strictEqual(after[0].value, 2)
+        })
+
+        it("should queue and resolve queries issued during an active reconnect", async () => {
+            conn['_socket'].destroy()
+
+            await new Promise(r => setTimeout(r, 500))
+
+            const results = await Promise.all(
+                Array.from({length: 10}, (_, i) => conn.query`SELECT ${i}::int as value`)
+            )
+
+            for (let i = 0; i < 10; i++) {
+                assert.strictEqual(results[i][0].value, i)
+            }
+        })
+
+        it("should clear cached prepared statement metadata on reconnect", async () => {
+            await conn.query`SELECT 1 as value`
+
+            const parsedBefore = conn['_parsed'].size
+            assert.ok(parsedBefore > 0)
+
+            conn['_socket'].destroy()
+
+            await new Promise(r => setTimeout(r, 50))
+
+            const result = await conn.query`SELECT 1 as value`
+            
+            assert.ok(conn['_parsed'].size === 1)
+            assert.strictEqual(result[0].value, 1)
+        })
+
+        it("should restore LISTEN subscriptions after reconnect", async () => {
+            const received: string[] = []
+
+            await conn.listen("reconnect_channel", payload => {
+                received.push(payload)
+            })
+
+            conn['_socket'].destroy()
+
+            await new Promise(r => setTimeout(r, 500))
+
+            await conn.notify("reconnect_channel", "hello-after-reconnect")
+
+            await new Promise(r => setTimeout(r, 100))
+
+            assert.deepStrictEqual(received, ["hello-after-reconnect"])
+        })
+
+        it("should reject in-flight batch queue entries with ErrConnectionReconnecting on drop", async () => {
+            const pending = conn.query`SELECT pg_sleep(0.5), 1 as value`
+
+            conn['_socket'].destroy()
+
+            await rejects(async () => await pending)
+            await new Promise(r => setTimeout(r, 500))
+        })
+
+        it("should keep retrying reconnect if the first attempt fails", async () => {
+            let attempts = 0
+            const originalPerformReconnect = conn['_performReconnect'].bind(conn)
+
+            conn['_performReconnect'] = () => {
+                attempts++
+
+                if (attempts === 1) {
+                    conn['_parsed'].clear()
+                    conn['_parsing'].clear()
+                    return Future.reject(new PostgresError("simulated reconnect failure"))
+                }
+
+                conn['_performReconnect'] = originalPerformReconnect
+                return originalPerformReconnect()
+            }
+            
+
+            conn['_socket'].destroy()
+
+            await new Promise(r => setTimeout(r, 500))
+            
+            assert.ok(attempts === 2, `expected at least 2 reconnect attempts, got ${attempts}`)
+
+            const result = await conn.query`SELECT 1 as value`
+            
+            assert.strictEqual(result[0].value, 1)
+        })
+    })
+
+
+    describe("Close behavior", async () => {
+
+        it("should resolve immediately when closing an already-idle connection", async () => {
+            const conn = await makeConnection()
+
+            await conn.query`SELECT 1 as value`
+
+            const start = Date.now()
+            await conn.close()
+            const elapsed = Date.now() - start
+
+            assert.ok(conn.isClosed)
+            assert.ok(!conn.isOpened)
+            // idle close should be near-instant (destroys socket directly)
+            assert.ok(elapsed < 100)
+        })
+
+        it("should reject new queries immediately after close", async () => {
+            const conn = await makeConnection()
+            await conn.close()
+
+            await rejects(
+                async () => await conn.query`SELECT 1 as value`,
+                ErrConnectionClosed
+            )
+        })
+
+        it("should be idempotent when close is called multiple times", async () => {
+            const conn = await makeConnection()
+
+            await conn.close()
+            await conn.close() // should not throw, should resolve immediately
+
+            assert.ok(conn.isClosed)
+        })
+
+        it("should wait for in-flight queries to finish before closing", async () => {
+            const conn = await makeConnection()
+
+            const pending = conn.query`SELECT pg_sleep(0.2), 1 as value`
+
+            const closePromise = conn.close()
+
+            // connection should report "closing" (not fully closed) while draining
+            assert.ok(conn.isClosed) // isClosed is true once _closing is set
+            assert.ok(!conn.isOpened)
+
+            const result = await pending
+            assert.strictEqual(result[0].value, 1)
+
+            await closePromise
+            assert.ok(conn.isClosed)
+        })
+
+        it("should reject queries issued while a drain-close is pending", async () => {
+            const conn = await makeConnection()
+
+            const pending = conn.query`SELECT pg_sleep(0.2), 1 as value`
+            const closePromise = conn.close()
+
+            // any new query submitted after close() was called must be rejected,
+            // even though the connection hasn't physically closed yet
+            await rejects(
+                async () => await conn.query`SELECT 2 as value`,
+                ErrConnectionClosed
+            )
+
+            await pending
+            await closePromise
+        })
+
+        it("should destroy the underlying socket only after the batch queue is fully drained", async () => {
+            const conn = await makeConnection()
+
+            const q1 = conn.query`SELECT pg_sleep(0.1), 1 as value`
+            const q2 = conn.query`SELECT pg_sleep(0.1), 2 as value`
+
+            const closePromise = conn.close()
+
+            const destroySpy = { called: false }
+            const originalDestroy = conn['_socket'].destroy.bind(conn['_socket'])
+            conn['_socket'].destroy = () => {
+                destroySpy.called = true
+                return originalDestroy()
+            }
+
+            assert.strictEqual(destroySpy.called, false)
+
+            await Promise.all([q1, q2])
+            await closePromise
+
+            assert.strictEqual(destroySpy.called, true)
+        })
+
+        it("should not attempt to reconnect after the connection has been closed", async () => {
+            const conn = await makeConnection()
+            await conn.close()
+            
+
+            let reconnectCalled = false
+
+            conn['_performReconnect'] = () => {reconnectCalled = true; return Ok()}
+
+            conn['_socket'].destroy()
+
+            await new Promise(r => setTimeout(r, 50))
+            assert.strictEqual(reconnectCalled, false)
+        })
+    })
+})

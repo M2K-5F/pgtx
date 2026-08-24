@@ -4,17 +4,17 @@ import { createAuthorizedSocket } from "./protocol/socket-authorization"
 import { ResponseType, ResponseTypes } from "./protocol/constants"
 import { ConnectionResponseReader } from "./protocol/connection-response-reader"
 import { compileSqlTemplate } from "./utils/template-compiler"
-import { Branded, ChannelName, ColumnDescription, ConnectionConfig, ConnectionPartialConfig, QueryMeta, QueryText, StatementName } from "./types"
+import { ChannelName, ConnectionConfig, ConnectionPartialConfig, QueryMeta, QueryText, Resolvers, Row, StatementName } from "./types"
 import { Transaction } from "./transaction"
 import { SocketConnector } from "./protocol/socket-connector"
 import { Queue } from "./queue"
-import { ParseQuery, SimpleQuery, StreamQuery } from "./query"
+import { CollectQuery, StreamQuery, ExecuteQuery } from "./query"
 import { sql } from "."
 import { Begin, Future, Ok } from 'fluent-future'
 import { ErrConnectionClosed, ErrConnectionReconnecting, PostgresError } from "./error"
 import { ReadableStreamDefaultController } from "stream/web"
 import { Batch } from "./batch"
-import { nextTick } from "process"
+import { nextTick, resourceUsage } from "process"
 
 
 const shedule = {
@@ -23,49 +23,31 @@ const shedule = {
     beforeMicrotask: nextTick
 }
 
+
 /**
- * Represents a single dedicated connection to the PostgreSQL database.
- * 
- * Supports:
- * - Tagged template queries with automatic parameter binding
- * - Prepared statements with caching
- * - Transaction management with savepoints
- * - Pipeline execution for concurrent queries
- * 
+ * A dedicated connection to PostgreSQL: tagged-template queries, prepared
+ * statement caching, transactions with savepoints, and pipelined execution.
+ *
  * @example
- * ```ts
- * const conn = await Connection.new({
- *   host: 'localhost',
- *   user: 'postgres',
- *   password: 'postgres',
- *   database: 'test'
- * })
- * 
- * // Simple query
+ * const conn = await Connection.new({ host: 'localhost', user: 'postgres', password: 'postgres', database: 'test' })
  * const users = await conn.query`SELECT * FROM users WHERE id = ${1}`
- * 
- * // Transaction
- * await conn.begin(async tx => {
- *   await tx.query`INSERT INTO users ...`
- * })
- * 
- * // Close connection
+ * await conn.begin(async tx => tx.query`INSERT INTO users ...`)
  * conn.close()
- * ```
  */
 export class Connection {
     private readonly config: ConnectionConfig
 
     private _activeBatch: Batch | null = null
-    private _isOpened = true
-    private _isReconnecting = false
+    private _closing: Resolvers<Future<void, PostgresError>> | null = null
+    private _closed = false
+    private _reconnecting: Future<void, PostgresError> | null = null
     private _cachedBuffer = ConnectionRequestWriter.new()
 
     private _socket: SocketConnector
     private _batchQueue: Queue<Batch> = new Queue()
 
     private _parsed = new Map<QueryText, QueryMeta>()
-    private _parsing = new Map<QueryText, Future<QueryMeta, PostgresError>>()
+    private _parsing = new Map<QueryText, StatementName>()
 
     private _listeningCallbacks = new Map<ChannelName, Set<(payload: string) => void>>()
     private _stmtCounter = 0
@@ -82,29 +64,15 @@ export class Connection {
     ) {
         this.config = config
         this._socket = new SocketConnector(socket, 
-            (type, _, reader) => this._handlePacket(type, reader),
-            () => this._registerReconnect()
+            (type, length, reader) => this._handlePacket(type, reader, length),
+            () => this._reconnect()
         )
     }
 
 
     /**
-     * Creates a new database connection.
-     * 
-     * @param params - Connection parameters
-     * @returns A new Connection instance
-     * @throws {PostgresError} If authentication fails or connection cannot be established
-     * 
-     * @example
-     * ```ts
-     * const conn = await Connection.new({
-     *   host: 'localhost',
-     *   port: 5432,
-     *   user: 'postgres',
-     *   password: 'secret',
-     *   database: 'myapp'
-     * })
-     * ```
+     * Opens a new connection and authenticates.
+     * @throws {PostgresError} if authentication fails or the connection can't be established
      */
     static new(config: ConnectionPartialConfig) {
         const conf: ConnectionConfig = {
@@ -136,23 +104,7 @@ export class Connection {
 
 
     private _sync(batch: Batch) {
-        if (!this._isOpened) {
-            batch.reject(ErrConnectionClosed)
-            return
-        }
-
-        if (this._isReconnecting) {
-            this._reconnect()
-                .then(() => {
-                    this._activeBatch = null
-                    this._isReconnecting = false
-                })
-                .then(() => {
-                    void this._restoreSubscriptions()
-                })
-                .catch(() => this.close())
-            return
-        }
+        if (this._reconnecting) return
 
         this._socket.write(batch.end())
         this._activeBatch = null
@@ -161,32 +113,81 @@ export class Connection {
 
 
     /**
-     * Executes a query using tagged template literals.
-     * 
-     * Parameters are automatically bound to `$1, $2, ...` placeholders.
-     * Queries with parameters use prepared statements for performance.
-     * 
-     * @param templates - Tagged template string with SQL
-     * @param args - Query parameters
-     * @returns Array of rows with proper typing
-     * @throws {Error} If connection is dead or query fails
-     * 
+     * Runs a query, binding template values as `$1, $2, ...`.
+     * Parameterized queries are cached as prepared statements.
+     *
      * @example
-     * ```ts
-     * // Simple query
-     * const users = await conn.query`SELECT * FROM users`
-     * 
-     * // With parameters
-     * const user = await conn.query`SELECT * FROM users WHERE id = ${1}`
-     * 
-     * // With typed result
-     * type User = { id: number, name: string }
-     * const users = await conn.query<User>`SELECT * FROM users`
-     * ```
+     * const users = await conn.query<User>`SELECT * FROM users WHERE id = ${1}`
      */
-    query<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]): Future<T[], PostgresError> {
-        if (!this._isOpened) return Future.reject(ErrConnectionClosed)
-        if (this._isReconnecting) return Future.reject(ErrConnectionReconnecting)
+    query<T extends Row>(templates: TemplateStringsArray, ...params: any[]) {
+        if (this.isClosed) return Future.reject(ErrConnectionClosed)
+            
+        if (this._reconnecting) return this._reconnecting.andThen(() => this._performQuery<T>(templates, ...params))
+
+        return this._performQuery<T>(templates, ...params)
+    }
+
+
+    private _performQuery<T extends Row>(templates: TemplateStringsArray, ...params: any[]): Future<T[], PostgresError> {
+        
+        const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
+        
+        if (this.config.logLevel === 'query') {
+            console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
+        }
+
+        if (this._parsed.has(text)) {
+            const meta = this._parsed.get(text)!
+            
+            const query = new CollectQuery<T>(
+                meta.statement, text, args, meta.columns, this.config.queryTimeout
+            )
+            this._registerBatch().registerQuery(query)
+
+            return query.future
+        }
+
+        if (this._parsing.has(text)) {
+            const statement = this._parsing.get(text)!
+
+            const query = new CollectQuery<T>(
+                statement, text, args, null, this.config.queryTimeout
+            )
+
+            this._registerBatch().registerQuery(query)
+
+            return query.future
+        }
+
+        
+        const query = new CollectQuery<T>(
+            this._nextStatement(), text, args, null, this.config.queryTimeout
+        )
+
+        this._parsing.set(text, query.statement)
+        this._registerBatch().registerParse(query)
+        this._registerBatch().registerQuery(query)
+
+        return query.future
+    }
+
+
+    /**
+     * Like {@link query}, but for statements that don't return rows (INSERT/UPDATE/DDL/etc).
+     *
+     * @example
+     * await conn.execute`UPDATE users SET name = ${name} WHERE id = ${id}`
+     */
+    execute(templates: TemplateStringsArray, ...params: any[]) {
+        if (this.isClosed) return Future.reject(ErrConnectionClosed)
+            
+        if (this._reconnecting) return this._reconnecting.andThen(() => this._performExecute(templates, ...params))
+
+        return this._performExecute(templates, ...params)
+    }
+
+
+    private _performExecute(templates: TemplateStringsArray, ...params: any[]): Future<void, PostgresError> {
 
         const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
         
@@ -197,7 +198,7 @@ export class Connection {
         if (this._parsed.has(text)) {
             const meta = this._parsed.get(text)!
             
-            const query = new SimpleQuery<T>(
+            const query = new ExecuteQuery(
                 meta.statement, text, args, meta.columns, this.config.queryTimeout
             )
             this._registerBatch().registerQuery(query)
@@ -205,102 +206,64 @@ export class Connection {
             return query.future
         }
 
-        if (!this._parsing.has(text)) {
-            const parseQuery = new ParseQuery(this._nextStatement(), text, this.config.queryTimeout)
+        if (this._parsing.has(text)) {
+            const statement = this._parsing.get(text)!
+            const query = new ExecuteQuery(statement, text, args, null, this.config.queryTimeout)
 
-            this._parsing.set(text, parseQuery.future)
+            this._registerBatch().registerQuery(query)
 
-            this._registerBatch().registerQuery(parseQuery)
+            return query.future
         }
 
-        const future = this._parsing.get(text)!
-        
+        const query = new ExecuteQuery(this._nextStatement(), text, args, null, this.config.queryTimeout)
 
-        return future.andThen(meta => {
-            const query = new SimpleQuery<T>(
-                meta.statement, text, args, meta.columns, this.config.queryTimeout
-            )
-            this._registerBatch().registerQuery(query)
-            
-            return query.future
-        })
+        this._parsing.set(text, query.statement)
+        this._registerBatch().registerParse(query)
+        this._registerBatch().registerQuery(query)
+
+        return query.future
     }
 
 
     /**
-     * Starts a managed transaction on this connection.
-     * 
-     * Automatically handles:
-     * - `BEGIN` before the callback
-     * - `COMMIT` on successful completion
-     * - `ROLLBACK` if an error is thrown
-     * 
-     * @param txCallback - Async function that receives a `Transaction` instance
-     * @returns The value returned from the callback
-     * @throws {Error} If connection is dead or transaction fails
-     * 
+     * Runs `txCallback` inside `BEGIN`/`COMMIT`, rolling back on error.
+     *
      * @example
-     * ```ts
-     * const result = await conn.begin(async tx => {
-     *   await tx.query`INSERT INTO accounts (id, balance) VALUES (1, 100)`
+     * await conn.begin(async tx => {
      *   await tx.query`UPDATE accounts SET balance = balance - 10 WHERE id = 1`
-     *   return { success: true }
      * })
-     * ```
      */
     begin<T>(txCallback: (transaction: Transaction) => Promise<T>) {
-        if (!this._isOpened) return Future.reject(ErrConnectionClosed)
-        if (this._isReconnecting) return Future.reject(ErrConnectionReconnecting)
+        if (this.isClosed) return Future.reject(ErrConnectionClosed)
 
-        const tx = new Transaction(this)
 
         return Begin()
-            .andThen(() => tx.query`BEGIN`)    
-            .andThen(() => 
-                Future.of(txCallback(tx))
+            .andThen(() => this.execute`begin`)    
+            .andThen(() =>  {
+                const tx = new Transaction(this)
+
+                return Future.of(txCallback(tx))
                     .tap(() => {
                         if (tx.isActive) return tx.commit()
                     })
                     .tapErr(() => {
                         if (tx.isActive) return tx.rollback()
                     })
-            )
+            })
     }
 
 
-    /**
-     * Sends an asynchronous notification to a channel via `pg_notify`.
-     * 
-     * @param channelName - The channel identifier
-     * @param payload - Optional string data (max 8000 bytes)
-     * 
-     * @example
-     * ```ts
-     * await conn.notify('events', 'hello')
-     * ```
-     */
+    /** Sends a `pg_notify` message on `channelName` (payload ≤ 8000 bytes). */
     notify(channelName: string, payload: string = "") {
-        if (!this._isOpened) return Future.reject(ErrConnectionClosed)
-        if (this._isReconnecting) return Future.reject(ErrConnectionReconnecting)
+        if (this.isClosed) return Future.reject(ErrConnectionClosed)
 
-        return this.query`select pg_notify(${channelName}, ${payload})`.map(() => {})
+        return this.execute`select pg_notify(${channelName}, ${payload})`.map(() => {})
     }
 
 
-    /**
-     * Subscribes a callback to a channel. Sends `LISTEN` on the first subscription.
-     * 
-     * @param channelName - The channel identifier
-     * @param callback - Function invoked when a notification arrives
-     * 
-     * @example
-     * ```ts
-     * await conn.listen('events', data => console.log(data))
-     * ```
-     */
+    /** Subscribes `callback` to `channelName`, issuing `LISTEN` on first subscription. */
     listen(channelName: string, callback: (payload: string) => void) {
-        if (!this._isOpened) return Future.reject(ErrConnectionClosed)
-        if (this._isReconnecting) return Future.reject(ErrConnectionReconnecting)
+        if (this.isClosed) return Future.reject(ErrConnectionClosed)
 
         if (!this._listeningCallbacks.has(channelName as ChannelName)) {
             this._listeningCallbacks.set(channelName as ChannelName, new Set())
@@ -310,24 +273,13 @@ export class Connection {
 
         callbackSet.add(callback)
 
-        return this.query`listen ${sql.ident(channelName)};`.map(() => {})
+        return this.execute`listen ${sql.ident(channelName)};`
     }
 
 
-    /**
-     * Unsubscribes a callback. Sends `UNLISTEN` if no callbacks remain for the channel.
-     * 
-     * @param channelName - The channel identifier
-     * @param callback - The registered callback to remove
-     * 
-     * @example
-     * ```ts
-     * await conn.unlisten('events', callback)
-     * ```
-     */
+    /** Unsubscribes `callback`, issuing `UNLISTEN` once no callbacks remain. */
     unlisten(channelName: string, callback: (payload: string) => void): Future<void, PostgresError> {
-        if (!this._isOpened) return Future.reject(ErrConnectionClosed)
-        if (this._isReconnecting) return Future.reject(ErrConnectionReconnecting)
+        if (this.isClosed) return Future.reject(ErrConnectionClosed)
 
         if (!this._listeningCallbacks.has(channelName as ChannelName)) {
             return Ok()
@@ -339,7 +291,7 @@ export class Connection {
 
         if (callbackSet.size === 0) {
             this._listeningCallbacks.delete(channelName as ChannelName)
-            return this.query`unlisten ${sql.ident(channelName)};`.map(() => {})
+            return this.execute`unlisten ${sql.ident(channelName)};`.map(() => {})
         }
         
         return Ok()
@@ -347,40 +299,15 @@ export class Connection {
 
 
     /**
-     * Executes an SQL query in streaming mode.
-     * 
-     * Data is streamed directly from the PostgreSQL binary network buffer into the Web Streams API 
-     * (`ReadableStream`), bypassing any intermediate array allocation or row accumulation in the JS heap.
-     * This pattern provides a true Zero-Memory Footprint and is ideal for exporting massive tables 
-     * or piping database payloads directly into HTTP responses (e.g., via `Bun.serve` or fetch `Response`).
+     * Streams query results as a `ReadableStream`, without buffering rows in memory.
+     * Ideal for large result sets or piping straight into an HTTP response.
      *
-     * @template T The expected shape of a single row interface.
-     * @param {TemplateStringsArray} templates The SQL string parts from the tagged template literal.
-     * @param {...any} args The parameterized query arguments.
-     * @returns {ReadableStream<T>} Synchronously returns a native Web ReadableStream instance.
-     * 
      * @example
-     * // Streaming a giant table directly to an HTTP response (Bun.serve)
-     * const userStream = conn.stream<User>`SELECT id, name FROM users`;
-     * return new Response(userStream, { headers: { 'Content-Type': 'application/json' } });
-     * 
-     * @example
-     * // Asynchronously iterating over rows as they arrive from the wire socket
-     * const stream = conn.stream<User>`SELECT * FROM orders WHERE status = ${'processed'}`;
-     * for await (const row of stream) {
-     *     console.log(row.id, row.amount); // Row object is eligible for GC immediately after iteration
-     * }
+     * for await (const row of conn.stream<User>`SELECT * FROM orders`) { ... }
      */
-    stream<T extends Record<string, any>>(templates: TemplateStringsArray, ...params: any[]) {
-        if (!this._isOpened) throw ErrConnectionClosed
-        if (this._isReconnecting) throw ErrConnectionReconnecting 
-
-        const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
+    stream<T extends Row>(templates: TemplateStringsArray, ...params: any[]) {
+        if (this.isClosed) throw ErrConnectionClosed
         
-        if (this.config.logLevel === 'query') {
-            console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
-        }
-
         let controller!: ReadableStreamDefaultController<T>
 
         const stream = new ReadableStream<T>({
@@ -389,46 +316,21 @@ export class Connection {
             }
         })
 
-        if (this._parsed.has(text)) {
-            const meta = this._parsed.get(text)!
-            const query = new StreamQuery<T>(
-                meta.statement, text, args, controller, meta.columns, this.config.queryTimeout
-            )
-            this._registerBatch().registerQuery(query)
-            
+        if (this._reconnecting) {
+            this._reconnecting
+                .tap(() => this._performStream<T>(templates, params, controller))
+                .tapErr(err => controller.error(err))
+
             return stream
         }
 
-        if (!this._parsing.has(text)) {
-            const parseQuery = new ParseQuery(this._nextStatement(), text, this.config.queryTimeout)
+        this._performStream<T>(templates, params, controller)
 
-            this._parsing.set(text, parseQuery.future)
-
-            this._registerBatch().registerQuery(parseQuery)
-        }
-
-        const future = this._parsing.get(text)!
-
-        future
-            .tap(meta => {
-                const query = new StreamQuery<T>(
-                    meta.statement, text, args, controller, meta.columns, this.config.queryTimeout
-                )
-                this._registerBatch().registerQuery(query)
-            })
-            .tapErr(err => 
-                controller.error(err)
-            )
-            .recover()
-        
         return stream
     }
     
 
-    private _streamWithController<T extends Record<string, any>>(templates: TemplateStringsArray, params: any[], controller: ReadableStreamDefaultController<T>) {
-        if (!this._isOpened) throw ErrConnectionClosed
-        if (this._isReconnecting) throw ErrConnectionReconnecting 
-
+    private _performStream<T extends Row>(templates: TemplateStringsArray, params: any[], controller: ReadableStreamDefaultController<T>) {
         const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
         
         if (this.config.logLevel === 'query') {
@@ -445,79 +347,81 @@ export class Connection {
                 this.config.queryTimeout
             )
             this._registerBatch().registerQuery(query)
+
             return
         }
 
-        if (!this._parsing.has(text)) {
-            const parseQuery = new ParseQuery(
-                this._nextStatement(), 
-                text, 
-                this.config.queryTimeout
-            )
+        if (this._parsing.has(text)) {
+            const statement = this._parsing.get(text)!
 
-            this._parsing.set(text, parseQuery.future)
+            const query = new StreamQuery(statement, text, args, controller, null, this.config.queryTimeout)
 
-            this._registerBatch().registerQuery(parseQuery)
+            this._registerBatch().registerQuery(query)
+
+            return
         }
-
-        const future = this._parsing.get(text)!
         
-        future
-            .tap(meta => {
-                const query = new StreamQuery<T>(
-                    meta.statement, text, args, 
-                    controller, meta.columns, 
-                    this.config.queryTimeout
-                )
+        const query = new StreamQuery<T>(
+            this._nextStatement(), 
+            text, args, controller, 
+            null, this.config.queryTimeout
+        )
 
-                this._registerBatch().registerQuery(query)
-            })
-            .tapErr(err => {                
-                controller.error(err)
+        this._parsing.set(text, query.statement)
+        this._registerBatch().registerParse(query)
+        this._registerBatch().registerQuery(query)
+    }
+    
+
+    private _reconnect() {
+        if (this.isClosed) return
+        if (this._reconnecting) return
+
+        this._reconnecting = this._performReconnect()
+            .tap(() => this._reconnecting = null)
+            .andThen(() => this._restoreSubscriptions())
+            .tapErr(() => {
+                this._reconnecting = null
+                this._reconnect()
             })
             .recover()
     }
 
-    
-    private _registerReconnect() {
-        if (this._isReconnecting) return
-        this._isReconnecting = true
-    }
 
-
-    private _resetConnectionState(cause: PostgresError) {
+    private _performReconnect() {
         this._parsed.clear()
         this._parsing.clear()
+        this._activeBatch?.reject(ErrConnectionReconnecting)
         this._activeBatch = null
         
-        this._rejectAllBatches(cause)
-    }
-    
+        while (this._batchQueue.hasMore) {            
+            this._batchQueue.shift.reject(ErrConnectionReconnecting)
+        }
 
-    private async _reconnect() {
 
-        const socket = await createAuthorizedSocket(ConnectionRequestWriter.new(), this.config)
+        return createAuthorizedSocket(ConnectionRequestWriter.new(), this.config)
+            .andThen(socket => {
+                const connector = new SocketConnector(
+                    socket, 
+                    (type, length ,reader) => this._handlePacket(type, reader, length),
+                    () => this._reconnect()
+                )
 
-        const connector = new SocketConnector(
-            socket, 
-            (type, _ ,reader) => this._handlePacket(type, reader),
-            (err) => this._registerReconnect()
-        )
+                this._socket = connector
 
-        this._socket = connector
-        
-        this._resetConnectionState(ErrConnectionReconnecting)
+                return Ok()
+            })
     }
 
     
     private _restoreSubscriptions() {
-        if (this._listeningCallbacks.size === 0) return Promise.resolve()
+        if (this._listeningCallbacks.size === 0) return Future.resolve()
 
-        const promises = Array.from(this._listeningCallbacks.keys()).map(channel => {
-            return this.query`LISTEN ${sql.ident(channel)};`
+        const futures = Array.from(this._listeningCallbacks.keys()).map(channel => {
+            return this.execute`LISTEN ${sql.ident(channel)};`
         })
 
-        return Promise.all(promises)
+        return Future.all(futures).map(() => {})
     }
 
 
@@ -526,14 +430,7 @@ export class Connection {
     }
 
 
-    private _rejectAllBatches(cause: PostgresError) {
-        while (this._batchQueue.hasMore) {
-            this._batchQueue.shift.reject(cause)
-        }
-    }
-
-
-    private _handlePacket(type: ResponseType, reader: ConnectionResponseReader) {
+    private _handlePacket(type: ResponseType, reader: ConnectionResponseReader, length: number) {
         switch (type) {
             case ResponseTypes.ParseComplete: {
                 reader.readParseComplete()
@@ -542,6 +439,12 @@ export class Connection {
 
             case ResponseTypes.BindComplete: {
                 reader.readBindComplete()
+
+                const query = this._getCurrentQuery()
+
+                if (!query.columns) {
+                    query.columns = this._parsed.get(query.text)!.columns
+                }
             } break
 
 
@@ -558,43 +461,43 @@ export class Connection {
             case ResponseTypes.NoData: {
                 reader.readNoData()
                 
-                const query = this._getCurrentQuery() as ParseQuery
+                const query = this._getCurrentQuery()
                 
                 const meta = {statement: query.statement, columns: []}
                 
                 this._parsing.delete(query.text)
-                query.resolve(meta)
+
                 this._parsed.set(query.text, meta)
-                this._batchQueue.current.next()
             } break
 
 
             case ResponseTypes.RowDescription: {
                 const columns = reader.readRowDescription()
 
-                const query = this._getCurrentQuery() as ParseQuery
+                const query = this._getCurrentQuery()
                 
-                const meta = {statement: query.statement, columns}
+                const meta = {
+                    statement: query.statement, columns
+                }
                 
                 this._parsing.delete(query.text)
-                query.resolve(meta)
+
                 this._parsed.set(query.text, meta)
-                this._batchQueue.current.next()
             } break
 
 
 
             case ResponseTypes.DataRow: {
-                let query = this._getCurrentQuery() as StreamQuery<any> | SimpleQuery<any>
+                let query = this._getCurrentQuery()
 
-                query.push(reader.readDataRow(query.columns, this.config.int8toBigint))
+                query.push(reader.readDataRow(query.columns!, this.config.int8toBigint))
             } break
 
 
             case ResponseTypes.ComandComplete: {
                 reader.readCommandComplete()
 
-                const query = this._getCurrentQuery() as StreamQuery<any> | SimpleQuery<any>
+                const query = this._getCurrentQuery()
                 
                 query.resolve()
                 
@@ -609,11 +512,7 @@ export class Connection {
                     console.log(`\nError:    ${error}\n`)
                 }
 
-                const query = this._getCurrentQuery()
-
-                if (query instanceof ParseQuery) {
-                    this._parsing.delete(query.text)
-                }
+                this._parsing.clear()
 
                 this._batchQueue.current.reject(error)
             } break
@@ -623,6 +522,9 @@ export class Connection {
                 reader.readReadyForQuery()
                 
                 this._batchQueue.next()
+                
+                this._closing && !this._hasQueries && this._closing.resolve()
+                
             } break
 
 
@@ -651,28 +553,48 @@ export class Connection {
     }
 
 
-    /**
-     * Checks if the connection is still alive and usable.
-     * Returns `false` if the socket is destroyed or connection is dead.
-     */
+    private get _hasQueries() {
+        return this._batchQueue.hasMore || this._activeBatch
+    }
+
+
+    /** Whether the connection is alive and usable. */
     get isOpened() {
-        return this._isOpened
+        return !this._closing && !this._closed
+    }
+
+
+    /** Whether the connection is closed or closing. */
+    get isClosed() {
+        return this._closed || !!this._closing
     }
 
 
     /**
-     * Closes the connection immediately.
-     * All pending queries will be rejected with an error.
-     * The connection cannot be used after this call.
-     * 
-     * @example
-     * ```ts
-     * conn.close()
-     * ```
+     * Closes the connection, awaiting for all pending queries. Not usable afterward.
      */
     close() {
-        this._isOpened = false
-        this._socket.destroy()
-        this._rejectAllBatches(ErrConnectionClosed)
+        if (this._closed) return Future.resolve()
+
+        if (this._closing) {
+            return this._closing.future
+        }        
+
+        if (!this._hasQueries) {
+            this._closed = true
+            this._socket.destroy()
+            return Future.resolve()
+        }
+
+        const closing = Future.withResolvers<void, PostgresError>()
+        this._closing = closing
+
+        closing.future.tap(() => {
+            this._closing = null
+            this._closed = true
+            this._socket.destroy()
+        })
+
+        return closing.future
     }
 }
