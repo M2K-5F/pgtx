@@ -1,7 +1,7 @@
 name: Database Drivers Benchmark
 
 on:
-  workflow_dispatch:  # Ручной запуск
+  workflow_dispatch:
   push:
     branches: [ main ]
     paths:
