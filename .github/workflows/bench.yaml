@@ -37,11 +37,13 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install dependencies
+        run: bun install
+
       - name: Build
         run: npm run build
 
-      - name: Install dependencies
-        run: bun install
+      
 
       - name: Install wrk
         run: |
