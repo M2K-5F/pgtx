@@ -64,7 +64,6 @@ jobs:
           SERVER_PID=$!
           echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
           
-          # Ждем пока сервер запустится
           for i in {1..30}; do
             if curl -s http://localhost:3000 > /dev/null; then
               echo "Server is up!"

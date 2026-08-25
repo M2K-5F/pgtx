@@ -86,14 +86,9 @@ const server = Bun.serve({
   },
 })
 
-console.log(`✅ Bun server: http://localhost:${server.port}`)
-console.log(`  /pgtx       - Pgtx driver`)
-console.log(`  /postgresjs - Postgres.js driver`)
-console.log(`  /bunsql     - Bun.Sql driver`)
-console.log(`\n📊 wrk -t2 -c50 -d10s http://localhost:${server.port}/pgtx`)
+console.log(`Bun server: http://localhost:${server.port}`)
 
 process.on('SIGINT', () => {
-  console.log('\n🛑 Shutting down...')
   pgtx.close()
   pg.end()
   bunSql.close()
