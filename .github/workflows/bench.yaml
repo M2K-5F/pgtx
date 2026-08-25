@@ -38,7 +38,7 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: bun install & bun add @m2k-5f/pgtx
 
       - name: Install wrk
         run: |
