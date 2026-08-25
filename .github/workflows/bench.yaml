@@ -1,22 +1,21 @@
-
-
-
-name: Bench
+name: Database Drivers Benchmark
 
 on:
+  workflow_dispatch:  # Ручной запуск
   push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+    branches: [ main ]
+    paths:
+      - 'server.ts'
+      - 'package.json'
+      - '.github/workflows/**'
 
 jobs:
-
   benchmark:
     runs-on: ubuntu-latest
-
+    
     services:
       postgres:
-        image: postgres:latest
+        image: postgres:16
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -24,34 +23,34 @@ jobs:
         ports:
           - 5433:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      - name: Install Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
         with:
-          node-version: 20
-          cache: 'npm'
+          bun-version: latest
 
       - name: Install dependencies
-        run: npm install
+        run: bun install
 
-      - name: Build
-        run: npm run build
-
-      - name: Install wrk 
+      - name: Install wrk
         run: |
-          sudo apt install wrk
+          sudo apt-get update
+          sudo apt-get install -y build-essential libssl-dev git postgresql-client
+          git clone https://github.com/wg/wrk.git wrk
+          cd wrk
+          make
+          sudo cp wrk /usr/local/bin
 
-
-      - name: Seed database for wrk
+      - name: Create benchmark table
         run: |
-          sudo apt-get install -y postgresql-client
           PGPASSWORD=postgres psql -h localhost -p 5433 -U postgres -d pgtx_test -c "
             DROP TABLE IF EXISTS bench_users;
             CREATE TABLE bench_users (id SERIAL PRIMARY KEY, name TEXT, balance INT);
@@ -59,64 +58,89 @@ jobs:
             SELECT 'User ' || i, floor(random() * 1000) FROM generate_series(1, 1000) s(i);
           "
 
-      - name: Run wrk HTTP benchmark
-        env:
-          PGHOST: localhost
-          PGPORT: 5433
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: pgtx_test
-          PGMAX: 10
+      - name: Start server
         run: |
-
-          npx tsx server-postgresjs.ts &
+          bun bun-server.ts &
           SERVER_PID=$!
-          sleep 3
-
-          echo "BENCHMARKING Postgres.js (10000 conns)"
-          wrk -t2 -c10000 -d10s --latency http://localhost:3001/user
-          sleep 3
-
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
           
-          echo "BENCHMARKING Postgres.js (1000 conns)"
-          wrk -t2 -c1000 -d10s --latency http://localhost:3001/user
-          sleep 3
+          # Ждем пока сервер запустится
+          for i in {1..30}; do
+            if curl -s http://localhost:3000 > /dev/null; then
+              echo "Server is up!"
+              break
+            fi
+            sleep 1
+          done
 
-          
-          echo "BENCHMARKING Postgres.js (200 conns)"
-          wrk -t2 -c200 -d10s --latency http://localhost:3001/user
+      - name: Warm up
+        run: |
+          curl -s http://localhost:3000/pgtx > /dev/null
+          curl -s http://localhost:3000/postgresjs > /dev/null
+          curl -s http://localhost:3000/bunsql > /dev/null
           sleep 2
 
-
-          echo "BENCHMARKING Postgres.js (50 conns)"
-          wrk -t2 -c50 -d10s --latency http://localhost:3001/user
-          sleep 2
-
+      - name: Benchmark - 50 connections
+        run: |
+          mkdir -p results
+          echo "=== Benchmark with 50 connections ===" | tee results/benchmark_50.txt
           
-          kill -9 $SERVER_PID
-          sleep 2
+          echo -e "\n--- PGTX Driver ---" | tee -a results/benchmark_50.txt
+          wrk -t2 -c50 -d10s --latency http://localhost:3000/pgtx | tee -a results/benchmark_50.txt
           
-          npx tsx server-pgtx.ts &
-          SERVER_PID=$!
-          sleep 3 
+          echo -e "\n--- Postgres.js Driver ---" | tee -a results/benchmark_50.txt
+          wrk -t2 -c50 -d10s --latency http://localhost:3000/postgresjs | tee -a results/benchmark_50.txt
           
-          echo "BENCHMARKING @m2k-5f/pgtx (10000 conns)"
-          wrk -t2 -c10000 -d10s --latency http://localhost:3000/user
-          sleep 3
+          echo -e "\n--- Bun.Sql Driver ---" | tee -a results/benchmark_50.txt
+          wrk -t2 -c50 -d10s --latency http://localhost:3000/bunsql | tee -a results/benchmark_50.txt
 
+      - name: Benchmark - 200 connections
+        run: |
+          echo "=== Benchmark with 200 connections ===" | tee results/benchmark_200.txt
           
-          echo "BENCHMARKING @m2k-5f/pgtx (1000 conns)"
-          wrk -t2 -c1000 -d10s --latency http://localhost:3000/user
-          sleep 3
-
+          echo -e "\n--- PGTX Driver ---" | tee -a results/benchmark_200.txt
+          wrk -t4 -c200 -d10s --latency http://localhost:3000/pgtx | tee -a results/benchmark_200.txt
           
-          echo "BENCHMARKING @m2k-5f/pgtx (200 conns)"
-          wrk -t2 -c200 -d10s --latency http://localhost:3000/user
-          sleep 2
+          echo -e "\n--- Postgres.js Driver ---" | tee -a results/benchmark_200.txt
+          wrk -t4 -c200 -d10s --latency http://localhost:3000/postgresjs | tee -a results/benchmark_200.txt
           
-          echo "BENCHMARKING @m2k-5f/pgtx (50 conns)"
-          wrk -t2 -c50 -d10s --latency http://localhost:3000/user
-          sleep 2
+          echo -e "\n--- Bun.Sql Driver ---" | tee -a results/benchmark_200.txt
+          wrk -t4 -c200 -d10s --latency http://localhost:3000/bunsql | tee -a results/benchmark_200.txt
 
+      - name: Benchmark - 500 connections
+        run: |
+          echo "=== Benchmark with 500 connections ===" | tee results/benchmark_500.txt
+          
+          echo -e "\n--- PGTX Driver ---" | tee -a results/benchmark_500.txt
+          wrk -t8 -c500 -d10s --latency http://localhost:3000/pgtx | tee -a results/benchmark_500.txt
+          
+          echo -e "\n--- Postgres.js Driver ---" | tee -a results/benchmark_500.txt
+          wrk -t8 -c500 -d10s --latency http://localhost:3000/postgresjs | tee -a results/benchmark_500.txt
+          
+          echo -e "\n--- Bun.Sql Driver ---" | tee -a results/benchmark_500.txt
+          wrk -t8 -c500 -d10s --latency http://localhost:3000/bunsql | tee -a results/benchmark_500.txt
 
-          kill -9 $SERVER_PID 2>/dev/null || true
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: results/
+          retention-days: 30
+
+      - name: Stop server
+        if: always()
+        run: |
+          kill $SERVER_PID 2>/dev/null || true
+
+      - name: Summary
+        run: |
+          echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 50 Connections" >> $GITHUB_STEP_SUMMARY
+          cat results/benchmark_50.txt >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 200 Connections" >> $GITHUB_STEP_SUMMARY
+          cat results/benchmark_200.txt >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 500 Connections" >> $GITHUB_STEP_SUMMARY
+          cat results/benchmark_500.txt >> $GITHUB_STEP_SUMMARY
