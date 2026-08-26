@@ -8,11 +8,11 @@ describe("Connection reconnect and close test", async () => {
 
     const makeConnection = () => {
         return Connection.new({
-            host: process.env.PGHOST || 'localhost',
-            user: process.env.PGUSER || 'postgres',
-            password: process.env.PGPASSWORD || 'postgres',
-            database: process.env.PGDATABASE || 'pgtx_test',
-            port: Number(process.env.PGPORT) || 5433
+            host: process.env.PGHOST!,
+            user: process.env.PGUSER!,
+            password: process.env.PGPASSWORD!,
+            database: process.env.PGDATABASE!,
+            port: Number(process.env.PGPORT)
         })
     }
 

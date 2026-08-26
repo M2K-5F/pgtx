@@ -38,30 +38,19 @@ await pool.begin(async tx => {
 That's most of what you need to know to use it. The rest of this document is for when you want to know *why* it's fast, or you need one of the sharper tools.
 
 ## Benchmarks
-
+ 
 Benchmarks run on GitHub Actions (Ubuntu, 2 vCPUs), reproducible, sources in this repo. Take CI numbers with the usual grain of salt — noisy neighbors and all that — but the gap is wide enough that it holds.
-
-**8192 concurrent parameterized SELECTs, measured with mitata:**
-
-| Driver | Avg time | Relative | Memory (p75) |
-|---|---:|---:|---:|
-| Pgtx | **69.23 ms** | 1.00× | ≈10.00 MB |
-| Postgres.js | 201.69 ms | 2.91× slower | ≈12.25 MB |
-| node-postgres (`pg`) | 738.97 ms | 10.67× slower | ≈12.74 MB |
-
-**Real HTTP throughput, `node:http` serving a PG-backed route, `wrk`:**
-
-| Concurrency | Pgtx | Postgres.js | Speedup |
-|---:|---:|---:|---:|
-| 50 | **13,575 req/s** | 5,507 req/s | 2.47× |
-| 200 | **18,431 req/s** | 6,640 req/s | 2.78× |
-| 1000 | **16,992 req/s** | 8,099 req/s | 2.10× |
-| 10000 | **17,700 req/s** | 10,414 req/s | 1.70× |
-
-(`/users` route — `SELECT` returning 5 rows, single connection pool, 2 wrk threads, 10s runs)
-
-The gap is widest at low-to-mid concurrency, where per-request overhead dominates; it narrows past ~10k concurrent connections as both drivers start hitting OS/socket limits rather than protocol overhead.
-
+ 
+**HTTP throughput against `postgres.js` and Bun's own native `Bun.sql` driver, on Bun:**
+ 
+| Connections | Pgtx | Postgres.js | Bun.sql | vs Postgres.js | vs Bun.sql |
+|---:|---:|---:|---:|---:|---:|
+| 50 | **27,885 req/s** | 8,967 req/s | 10,170 req/s | 3.11× | 2.74× |
+| 200 | **31,975 req/s** | 9,861 req/s | 11,725 req/s | 3.24× | 2.73× |
+| 500 | **31,245 req/s** | 8,289 req/s | 11,005 req/s | 3.77× | 2.84× |
+ 
+Bun.sql is Bun's own built-in driver, written in native code and generally treated as the speed baseline in that ecosystem. Pgtx stays 2.7-2.8× ahead of it at every concurrency level tested — the gap doesn't come from JS-vs-native, it comes from the protocol.
+ 
 **How:** everything you fire concurrently against the same connection gets folded into one pipelined write — Parse/Bind/Execute for every query in the batch goes out in a single `socket.write()`, and results get demuxed as they come back, in order, without buffering rows you haven't asked for yet. Prepared statements are cached and deduplicated automatically, row descriptions are cached alongside them, and the binary protocol skips text (de)serialization where it can. None of this requires you to change how you write queries.
 
 ## The parts worth knowing about

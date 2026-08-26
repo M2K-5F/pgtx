@@ -3,11 +3,11 @@ import assert from 'node:assert';
 import { Pool } from '../src'; 
 
 const dbConfig = {
-    host: process.env.PGHOST || 'localhost',
-    port: Number(process.env.PGPORT) || 5433,
-    user: process.env.PGUSER || 'postgres',
-    password: process.env.PGPASSWORD || 'postgres',
-    database: process.env.PGDATABASE || 'pgtx_test',
+    host: process.env.PGHOST!,
+    port: Number(process.env.PGPORT),
+    user: process.env.PGUSER!,
+    password: process.env.PGPASSWORD,
+    database: process.env.PGDATABASE!,
     max: 2,
     queryTimeout: 5000
 }

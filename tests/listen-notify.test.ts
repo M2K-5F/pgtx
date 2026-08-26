@@ -4,12 +4,12 @@ import { Pool, sql } from "../src";
 
 describe("LISTEN / NOTIFY Async Pipeline Test", async () => {
     const pool = new Pool({
-        host: process.env.PGHOST || 'localhost',
-        user: process.env.PGUSER || 'postgres',
-        password: process.env.PGPASSWORD || 'postgres',
-        database: process.env.PGDATABASE || 'pgtx_test',
-        port: Number(process.env.PGPORT) || 5433,
-        max: Number(process.env.PGMAX) || 10
+        host: process.env.PGHOST!,
+        user: process.env.PGUSER!,
+        password: process.env.PGPASSWORD!,
+        database: process.env.PGDATABASE!,
+        port: Number(process.env.PGPORT),
+        max: Number(process.env.PGMAX),
     })
 
     after(async () => {

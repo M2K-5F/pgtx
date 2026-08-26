@@ -1,7 +1,6 @@
 import { AuthenticationCode, DataTypeOid, DataTypeOids, ResponseType, TransactionStatus } from "./constants"
 import { ChannelName, ColumnDescription } from "../types"
 import { PostgresError } from "../error"
-import { threadCpuUsage } from "node:process"
 
 
 const columnValueCache = new Map<number, Map<number, string>>()

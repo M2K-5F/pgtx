@@ -14,7 +14,7 @@ import { Begin, Future, Ok } from 'fluent-future'
 import { ErrConnectionClosed, ErrConnectionReconnecting, PostgresError } from "./error"
 import { ReadableStreamDefaultController } from "stream/web"
 import { Batch } from "./batch"
-import { nextTick, resourceUsage } from "process"
+import { nextTick } from "process"
 
 
 const shedule = {

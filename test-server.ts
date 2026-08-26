@@ -1,12 +1,13 @@
 import { sql, Pool } from '@m2k-5f/pgtx';
+import { env } from 'node:process';
 import postgres from 'postgres';
 
 const DB = {
-  host: 'localhost',
-  port: 5433,
-  user: 'postgres',
-  password: 'postgres',
-  database: 'pgtx_test',
+  host: env.PGHOST!,
+  port: Number(env.PGPORT!),
+  user: env.PGUSER!,
+  password: env.PGPASSWORD!,
+  database: env.PGDATABASE!,
 }
 
 const pgtx = new Pool({ ...DB, max: 20, syncShedule: 'Immediate' })
@@ -37,7 +38,7 @@ const server = Bun.serve({
         case 'pgtx': {
           const result = await pgtx.query`
             SELECT id, name, balance 
-            FROM bench_users 
+            FROM users 
             ORDER BY id 
             LIMIT 30
           `
@@ -47,7 +48,7 @@ const server = Bun.serve({
         case 'postgresjs': {
           const result = await pg`
             SELECT id, name, balance 
-            FROM bench_users 
+            FROM users 
             ORDER BY id 
             LIMIT 30
           `
@@ -57,7 +58,7 @@ const server = Bun.serve({
         case 'bunsql': {
           const result = await bunSql`
             SELECT id, name, balance 
-            FROM bench_users 
+            FROM users 
             ORDER BY id 
             LIMIT 30
           `
