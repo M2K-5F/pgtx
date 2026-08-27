@@ -160,7 +160,7 @@ export const authorizeSocket = (socket: Socket, config: ConnectionConfig) => {
 
 
             case AuthenticationCodes.CleartextPassword: {
-                if (!config.password) throw ErrPasswordRequired
+                if (!config.password) return reject(ErrPasswordRequired)
                 connector.write(writer.writePassword(config.password))
                 writer.clear()
             } break
@@ -168,7 +168,7 @@ export const authorizeSocket = (socket: Socket, config: ConnectionConfig) => {
 
             case AuthenticationCodes.MD5Password: {
                 const salt = reader.readMD5Salt()
-                if (!config.password) throw ErrPasswordRequired
+                if (!config.password) return reject(ErrPasswordRequired)
 
                 const password = encryptMd5(config.password, config.user, salt)
                 connector.write(writer.writePassword(password))
@@ -178,7 +178,7 @@ export const authorizeSocket = (socket: Socket, config: ConnectionConfig) => {
             
             case AuthenticationCodes.SASL: {
                 reader.readSaslMechanisms()
-                if (!config.password) throw ErrPasswordRequired
+                if (!config.password) return reject(ErrPasswordRequired)
 
                 clientMessage = `n=${config.user},r=${nonce}`
 
@@ -190,7 +190,7 @@ export const authorizeSocket = (socket: Socket, config: ConnectionConfig) => {
             case AuthenticationCodes.SASLContinue: {
                 serverMessage = reader.readSaslMessage(length)
 
-                if (!config.password) throw ErrPasswordRequired
+                if (!config.password) return reject(ErrPasswordRequired)
 
                 const parts = Object.fromEntries(serverMessage.split(',').map(x => x.split('=')))
                 

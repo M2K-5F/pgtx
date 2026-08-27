@@ -21,6 +21,9 @@ type AllTypesRow = {
     ts_col: Date   
     tstz_col: Date | string
     uuid_col: string
+    numeric_col: string
+    time_col: string
+    timetz_col: string
 }
 
 describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
@@ -52,7 +55,10 @@ describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
                 date_col date not null,
                 ts_col timestamp not null,
                 tstz_col timestamptz not null,
-                uuid_col uuid not null
+                uuid_col uuid not null,
+                numeric_col numeric(14,4) not null,
+                time_col time not null,
+                timetz_col timetz not null
             );`
     })
 
@@ -83,7 +89,10 @@ describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
             date_col: new Date("2026-08-11"),
             ts_col: new Date("2026-08-11 12:00:00"),
             tstz_col: new Date("2026-08-11 12:00:00+00"),
-            uuid_col: sampleUuid
+            uuid_col: sampleUuid,
+            numeric_col: "12345678.1234",
+            time_col: "15:30:45.123",
+            timetz_col: "15:30:45.123+03:00"
         }
 
         await pool.query`
@@ -104,12 +113,13 @@ describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
                 text_col text, varchar_col varchar(255), char_col char(10),
                 float4_col real, float64_col double precision, bytea_col bytea,
                 json_col json, jsonb_col jsonb, date_col date, ts_col timestamp, 
-                tstz_col timestamptz, uuid_col uuid
+                tstz_col timestamptz, uuid_col uuid,
+                numeric_col numeric(14,4), time_col time, timetz_col timetz
             );`
 
         await pool.query`
             insert into ${sql.literal(nullTableName)} 
-            values (null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
+            values (null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         `
 
         const rows = await pool.query<any>`SELECT * FROM ${sql.literal(nullTableName)}`
@@ -120,5 +130,41 @@ describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
         })
 
         await pool.query`drop table if exists ${sql.literal(nullTableName)}`
+    })
+    
+    it("should correctly parse numeric edge cases (negative, whole, NaN)", async () => {
+        const numericTableName = "numeric_edge_cases_test"
+
+        await pool.query`
+            create table if not exists ${sql.literal(numericTableName)} (
+                id integer primary key,
+                val numeric(20,6) not null
+            );`
+
+        await pool.query`truncate table ${sql.ident(numericTableName)}`
+
+        const cases: [number, string][] = [
+            [1, "0.000000"],
+            [2, "-123456.789000"],
+            [3, "999999999999.999999"],
+            [4, "-0.000001"],
+            [5, "100.000000"],
+        ]
+
+        for (const [id, val] of cases) {
+            await pool.query`
+                insert into ${sql.ident(numericTableName)} (id, val) values (${id}, ${val}::numeric)
+            `
+        }
+
+        const rows = await pool.query<{id: number, val: string}>`
+            SELECT id, val FROM ${sql.ident(numericTableName)} ORDER BY id
+        `
+
+        rows.forEach((row, i) => {
+            assert.strictEqual(row.val, cases[i][1], `numeric case id=${cases[i][0]}`)
+        })
+
+        await pool.query`drop table if exists ${sql.literal(numericTableName)}`
     })
 })

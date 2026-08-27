@@ -139,6 +139,61 @@ export class ConnectionResponseBuffer {
     }
 
 
+    readNumeric(): string {
+        const ndigits = this.readInt16()
+        const weight = this.readInt16()
+        const sign = this.readInt16()
+        const dscale = this.readInt16()
+
+        if (sign === 0xC000 || sign === -16384) return 'NaN'
+
+        const digits = new Array<number>(ndigits)
+        for (let i = 0; i < ndigits; i++) {
+            digits[i] = this.readInt16()
+        }
+
+        const highExp = Math.max(weight, 0)
+        const lowExp = Math.min(weight - ndigits + 1, -1)
+
+        let intPart = ''
+        for (let exp = highExp; exp >= 0; exp--) {
+            const idx = weight - exp
+            const digit = (idx >= 0 && idx < ndigits) ? digits[idx] : 0
+            intPart += exp === highExp ? String(digit) : String(digit).padStart(4, '0')
+        }
+        if (intPart === '') intPart = '0'
+
+        let fracPart = ''
+        for (let exp = -1; exp >= lowExp; exp--) {
+            const idx = weight - exp
+            const digit = (idx >= 0 && idx < ndigits) ? digits[idx] : 0
+            fracPart += String(digit).padStart(4, '0')
+        }
+
+        if (dscale > 0) {
+            fracPart = fracPart.padEnd(dscale, '0').slice(0, dscale)
+        } else {
+            fracPart = ''
+        }
+
+        const negative = sign === 0x4000 || sign === 16384
+        const result = fracPart ? `${intPart}.${fracPart}` : intPart
+
+        return negative ? `-${result}` : result
+    }
+
+    readBinaryTimetz(): string {
+        const time = this.readBinaryTime()
+        const zoneOffsetSeconds = this.readInt32()
+        const offsetMinutesTotal = -zoneOffsetSeconds / 60
+        const sign = offsetMinutesTotal >= 0 ? '+' : '-'
+        const abs = Math.abs(offsetMinutesTotal)
+        const offH = Math.floor(abs / 60)
+        const offM = abs % 60
+        return `${time}${sign}${String(offH).padStart(2, '0')}:${String(offM).padStart(2, '0')}`
+    }
+
+
     readFloat32() {
         const value = this.buffer.readFloatBE(this.caret)
         this.caret += 4
@@ -410,6 +465,18 @@ export class ConnectionResponseReader {
 
                 case DataTypeOids.Uuid: {
                     row[key] = this.buffer.readUuid()
+                } break
+
+                case DataTypeOids.Time: {
+                    row[key] = this.buffer.readBinaryTime()
+                } break
+
+                case DataTypeOids.Timetz: {
+                    row[key] = this.buffer.readBinaryTimetz()
+                } break
+
+                case DataTypeOids.Numeric: {
+                    row[key] = this.buffer.readNumeric()
                 } break
 
                 default: {
