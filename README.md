@@ -203,6 +203,8 @@ interface ConnectionPartialConfig {
   int8toBigint?: boolean                     // default false
   queryTimeout?: number                      // default 30000
   syncShedule?: 'beforeMicrotask' | 'afterMicrotask' | 'Immediate'  // default 'afterMicrotask'
+  ssl?: 'disable' | 'prefer' | 'require' // defaut 'prefer' 
+  caPath?: string // forces `ssl` to 'require' if provided
 }
 ```
 

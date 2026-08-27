@@ -221,6 +221,15 @@ export class ConnectionRequestWriter {
     }
 
 
+    writeSSLRequest() {
+        this.buffer.startMessage()
+            .writeInt32(80877103)
+            .endRequest()
+
+        return this
+    }
+
+
     writePassword(password: string) {
         this.buffer.startRequest(RequestTypes.Password)
             .writeCString(password)

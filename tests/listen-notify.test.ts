@@ -1,6 +1,6 @@
-import { after, before, describe, it } from "node:test";
+import { after, describe, it } from "node:test";
 import assert from "node:assert";
-import { Pool, sql } from "../src";
+import { Pool } from "../src";
 
 describe("LISTEN / NOTIFY Async Pipeline Test", async () => {
     const pool = new Pool({

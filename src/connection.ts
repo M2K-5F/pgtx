@@ -1,6 +1,5 @@
 import { Socket } from "net"
 import { ConnectionRequestWriter } from "./protocol/connection-request-writer"
-import { createAuthorizedSocket } from "./protocol/socket-authorization"
 import { ResponseType, ResponseTypes } from "./protocol/constants"
 import { ConnectionResponseReader } from "./protocol/connection-response-reader"
 import { compileSqlTemplate } from "./utils/template-compiler"
@@ -15,6 +14,7 @@ import { ErrConnectionClosed, ErrConnectionReconnecting, PostgresError } from ".
 import { ReadableStreamDefaultController } from "stream/web"
 import { Batch } from "./batch"
 import { nextTick } from "process"
+import { authorizeSocket, createSocket, upgradeSocket } from "./protocol/socket-authorization"
 
 
 const shedule = {
@@ -59,12 +59,12 @@ export class Connection {
 
 
     private constructor(
-        config: ConnectionConfig,
         socket: Socket,
+        config: ConnectionConfig,
     ) {
         this.config = config
         this._socket = new SocketConnector(socket, 
-            (type, length, reader) => this._handlePacket(type, reader, length),
+            this._handlePacket.bind(this),
             () => this._reconnect()
         )
     }
@@ -80,12 +80,15 @@ export class Connection {
             logLevel: config.logLevel || 'error',
             int8toBigint: config.int8toBigint || false,
             queryTimeout: config.queryTimeout || 30000,
-            syncShedule: config.syncShedule || 'afterMicrotask'
+            syncShedule: config.syncShedule || 'afterMicrotask',
+            ssl: config.caPath ? 'require' : (config.ssl || 'prefer')
         }
 
-        const writer = ConnectionRequestWriter.new()
-        return createAuthorizedSocket(writer, conf)
-            .andThen(socket => Ok(new Connection(conf, socket)))
+
+        return createSocket(conf)
+            .andThen(socket => upgradeSocket(socket, conf))
+            .andThen(socket => authorizeSocket(socket, conf))
+            .andThen(socket => Ok(new Connection(socket, conf)))
     }
 
 
@@ -399,19 +402,21 @@ export class Connection {
             this._batchQueue.shift.reject(ErrConnectionReconnecting)
         }
 
-
-        return createAuthorizedSocket(ConnectionRequestWriter.new(), this.config)
+        
+        return createSocket(this.config)
+            .andThen(socket => upgradeSocket(socket, this.config))
+            .andThen(socket => authorizeSocket(socket, this.config))
             .andThen(socket => {
                 const connector = new SocketConnector(
                     socket, 
-                    (type, length ,reader) => this._handlePacket(type, reader, length),
+                    this._handlePacket.bind(this),
                     () => this._reconnect()
                 )
 
                 this._socket = connector
 
                 return Ok()
-            })
+            })           
     }
 
     
@@ -431,7 +436,7 @@ export class Connection {
     }
 
 
-    private _handlePacket(type: ResponseType, reader: ConnectionResponseReader, length: number) {
+    private _handlePacket(type: ResponseType, length: number, reader: ConnectionResponseReader) {
         switch (type) {
             case ResponseTypes.ParseComplete: {
                 reader.readParseComplete()

@@ -1,127 +1,229 @@
-import { createConnection, Socket } from "node:net"
 import { ConnectionRequestWriter } from "./connection-request-writer"
 import { calculateScramAuth, generateNonce } from "../security/sasl"
 import { SocketConnector } from "./socket-connector"
-import { AuthenticationCodes, ResponseTypes } from "./constants"
+import { AuthenticationCodes, ResponseType, ResponseTypes } from "./constants"
 import { encryptMd5 } from "../security/md5"
-import { ErrNonceMismatch, ErrPasswordRequired, ErrSocketFailedDuringAuth, PostgresError } from "../error"
+import { ErrCertificateFileNotFound, ErrDatabaseNotFound, ErrNonceMismatch, ErrPasswordRequired, ErrSocketFailedDuringAuth, ErrSSLDenied, ErrUntrustedCertificate, PostgresError } from "../error"
 import { Future } from "fluent-future"
-import { AuthorizationParams } from "../types"
+import { connect } from "node:tls"
+import { createConnection, Socket } from "node:net"
+import { ConnectionResponseReader } from "./connection-response-reader"
+import { ConnectionConfig } from "../types"
+import { readFileSync } from "node:fs"
 
 
-export const createAuthorizedSocket = (writer: ConnectionRequestWriter, params: AuthorizationParams) => {
+export const createSocket = (config: ConnectionConfig) => {
+    const { future, resolve, reject } = Future.withResolvers<Socket, PostgresError>()
+
+    const socket = createConnection({host: config.host, port: config.port})
+
+    socket.once('connect', () => resolve(socket))
+    socket.once('error', () => reject(ErrDatabaseNotFound))
+
+    return future
+}
+
+
+export const upgradeSocket = (socket: Socket, config: ConnectionConfig) => {
+    if (config.ssl === 'disable') return Future.resolve(socket)
+
     const { future, reject, resolve } = Future.withResolvers<Socket, PostgresError>()
+
+    const writer = ConnectionRequestWriter.new()
+
+    const onError = () => {
+        cleanup()
+        reject(ErrSocketFailedDuringAuth)
+    }
+    socket.once('error', onError)
+
+    const cleanup = () => {
+        socket.off('error', onError)
+    }
+
+    socket.once('data', (data: Buffer) => {
+        cleanup()
+
+        const responseCode = data.toString('utf8', 0, 1)
+
+        if (responseCode === 'S') {
+            if (data.length > 1) {
+                socket.unshift(data.subarray(1))
+            }
+
+            let cert: Buffer | undefined = undefined
+
+            try {
+                cert = config.caPath ? readFileSync(config.caPath) : undefined
+            } catch {
+                socket.destroy()
+                return reject(ErrCertificateFileNotFound)
+            }
+
+            const tls = connect({
+                socket: socket,
+                host: config.host,
+                rejectUnauthorized: config.ssl === 'require',
+                ca: cert
+            })
+
+            const tlsCleanup = () => {
+                tls.off('secureConnect', onSecureConnect)
+                tls.off('error', onTlsError)
+            }
+
+            const onSecureConnect = () => {
+                tlsCleanup()                
+                resolve(tls)
+            }
+
+            const onTlsError = () => {
+                tlsCleanup()
+                tls.destroy() 
+                reject(ErrUntrustedCertificate)
+            }
+
+            tls.once('secureConnect', onSecureConnect)
+            tls.once('error', onTlsError)
+
+        } else if (responseCode === 'N') {
+            if (config.ssl === 'require') {
+                socket.destroy()
+                reject(ErrSSLDenied)
+                return
+            }
+            resolve(socket)
+        } else {
+            socket.destroy()
+            reject(ErrSocketFailedDuringAuth)
+        }
+    })
+
+    socket.write(writer.writeSSLRequest().asBuffer())
+    writer.clear()
+
+    return future
+}
+
+
+export const authorizeSocket = (socket: Socket, config: ConnectionConfig) => {
+    const { future, reject, resolve } = Future.withResolvers<Socket, PostgresError>()
+    const writer = ConnectionRequestWriter.new()
 
     const nonce = generateNonce()
     let clientMessage = ''
     let serverMessage = ''
 
-    const socket = createConnection({host: params.host, port: params.port})
 
     const connector = new SocketConnector(socket, 
-        (type, length, reader) => {
-            writer.clear()
-            switch (type) {
-                case ResponseTypes.Authentication: {
-
-                    switch (reader.readAuthentication()) {
-                        case AuthenticationCodes.Ok: break
-
-                        case AuthenticationCodes.CleartextPassword: {
-                            if (!params.password) throw ErrPasswordRequired
-                            connector.write(writer.writePassword(params.password))
-                            break
-                        } 
-
-                        case AuthenticationCodes.MD5Password: {
-                            const salt = reader.readMD5Salt()
-                            if (!params.password) throw ErrPasswordRequired
-
-                            const password = encryptMd5(params.password, params.user, salt)
-                            connector.write(writer.writePassword(password))
-                            break
-                        } 
-
-                        case AuthenticationCodes.SASL: {
-                            reader.readSaslMechanisms()
-                            if (!params.password) throw ErrPasswordRequired
-
-                            clientMessage = `n=${params.user},r=${nonce}`
-
-                            connector.write(writer.writeSaslInitial('SCRAM-SHA-256', `n,,${clientMessage}`))
-                            break
-                        }
-
-                        case AuthenticationCodes.SASLContinue: {
-                            serverMessage = reader.readSaslMessage(length)
-
-                            if (!params.password) throw ErrPasswordRequired
-
-                            const parts = Object.fromEntries(serverMessage.split(',').map(x => x.split('=')))
-                            
-                            const serverNonce = parts.r
-                            const saltBase64 = parts.s
-                            const iterations = parseInt(parts.i, 10)
-
-                            if (!serverNonce.startsWith(nonce)) {
-                                connector.destroy()
-                                return reject(ErrNonceMismatch)
-                            }
-
-                            const clientFinalMessageWithoutProof = `c=biws,r=${serverNonce}`
-                            
-                            const authMessage = `${clientMessage},${serverMessage},${clientFinalMessageWithoutProof}`
-
-                            const { clientProof } = calculateScramAuth(params.password, saltBase64, iterations, authMessage)
-
-                            const clientFinalMessage = `${clientFinalMessageWithoutProof},p=${clientProof}`
-
-                            connector.write(writer.writeSaslResponse(clientFinalMessage))
-                            break
-                        }
-
-                        case AuthenticationCodes.SASLFinal: {
-                            reader.readSaslMessage(length)
-                            break
-                        } 
-                    } 
-                    break
-                } 
-
-
-                case ResponseTypes.ParamaterStatus: {
-                    reader.readParameterStatus()
-                    break
-                }
-
-
-                case ResponseTypes.ErrorResponse: {                            
-                    const error = reader.readErrorResponse()
-                    connector.destroy()
-                    reject(error)
-                    return 
-                }
-
-
-                case ResponseTypes.BackendKeyData: {
-                    reader.readBackendKeyData()
-                }
-
-
-                case ResponseTypes.ReadyForQuery: {
-                    reader.readReadyForQuery()
-
-                    resolve(connector.unwrapSocket())
-                    return
-                }
-            }
-        },
-        error => {
-            reject(ErrSocketFailedDuringAuth)
-        }
+        handle,
+        () => reject(ErrSocketFailedDuringAuth)
     )
 
-    connector.write(writer.writeStartup(params.user, params.database))
+
+    function handle(type: ResponseType, length: number, reader: ConnectionResponseReader) {
+        switch (type) {
+            case ResponseTypes.Authentication: {
+                Authentication(length, reader)
+            } break
+
+
+            case ResponseTypes.ParamaterStatus: {
+                reader.readParameterStatus()
+            } break
+
+
+            case ResponseTypes.ErrorResponse: {                            
+                const error = reader.readErrorResponse()
+                connector.destroy()
+                reject(error)
+            } return
+
+
+            case ResponseTypes.BackendKeyData: {
+                reader.readBackendKeyData()
+            } break
+
+
+            case ResponseTypes.ReadyForQuery: {
+                reader.readReadyForQuery()
+
+                resolve(connector.unwrapSocket())
+            } return
+        }
+    }
+
+
+    function Authentication(length: number, reader: ConnectionResponseReader) {
+        switch (reader.readAuthentication()) {
+            case AuthenticationCodes.Ok: break
+
+
+            case AuthenticationCodes.CleartextPassword: {
+                if (!config.password) throw ErrPasswordRequired
+                connector.write(writer.writePassword(config.password))
+                writer.clear()
+            } break
+
+
+            case AuthenticationCodes.MD5Password: {
+                const salt = reader.readMD5Salt()
+                if (!config.password) throw ErrPasswordRequired
+
+                const password = encryptMd5(config.password, config.user, salt)
+                connector.write(writer.writePassword(password))
+                writer.clear()
+            } break
+
+            
+            case AuthenticationCodes.SASL: {
+                reader.readSaslMechanisms()
+                if (!config.password) throw ErrPasswordRequired
+
+                clientMessage = `n=${config.user},r=${nonce}`
+
+                connector.write(writer.writeSaslInitial('SCRAM-SHA-256', `n,,${clientMessage}`))
+                writer.clear()
+            } break
+
+
+            case AuthenticationCodes.SASLContinue: {
+                serverMessage = reader.readSaslMessage(length)
+
+                if (!config.password) throw ErrPasswordRequired
+
+                const parts = Object.fromEntries(serverMessage.split(',').map(x => x.split('=')))
+                
+                const serverNonce = parts.r
+                const saltBase64 = parts.s
+                const iterations = parseInt(parts.i, 10)
+
+                if (!serverNonce.startsWith(nonce)) {
+                    connector.destroy()
+                    return reject(ErrNonceMismatch)
+                }
+
+                const clientFinalMessageWithoutProof = `c=biws,r=${serverNonce}`
+                
+                const authMessage = `${clientMessage},${serverMessage},${clientFinalMessageWithoutProof}`
+
+                const { clientProof } = calculateScramAuth(config.password, saltBase64, iterations, authMessage)
+
+                const clientFinalMessage = `${clientFinalMessageWithoutProof},p=${clientProof}`
+
+                connector.write(writer.writeSaslResponse(clientFinalMessage))
+                writer.clear()
+            } break
+
+
+            case AuthenticationCodes.SASLFinal: {
+                reader.readSaslMessage(length)
+            } break
+        } 
+    }
+
+
+    connector.write(writer.writeStartup(config.user, config.database))
     writer.clear()
 
     return future

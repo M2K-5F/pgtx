@@ -55,3 +55,8 @@ export const ErrTransactionClosed = new PostgresError("Transaction closed", "tra
 
 export const ErrConnectionClosed = new PostgresError("Connection is closed", 'connection_closed', "", "ERROR")
 export const ErrConnectionReconnecting = new PostgresError("Connection are reconnecting", "connection_reconnecting", "", "ERROR")
+export const ErrSSLDenied = new PostgresError("SSL is required but server denied it")
+export const ErrDatabaseNotFound = new PostgresError('Database with that dsn not found')
+export const ErrUntrustedCertificate = new PostgresError("Database SSL certificate is untrusted or self-signed")
+export const ErrCertificateFileNotFound = new PostgresError("The SSL certificate file specified in caPath was not found")
+

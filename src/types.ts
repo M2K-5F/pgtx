@@ -22,14 +22,7 @@ export type ColumnDescription = {
     typeOID: DataTypeOid
 }
 
-export type AuthorizationParams = {
-    host: string
-    port: number
-    user: string
-    database: string
-    password?: string
-}
-
+export type SSLMode = 'disable' | 'prefer' | 'require'
 
 type LogLevel = "none" | "error" | "notice" | "query"
 
@@ -42,7 +35,9 @@ export type ConnectionPartialConfig = {
     logLevel?: LogLevel,
     int8toBigint?: boolean,
     queryTimeout?: number
-    syncShedule?: "beforeMicrotask" | "afterMicrotask" | "Immediate"
+    syncShedule?: "beforeMicrotask" | "afterMicrotask" | "Immediate",
+    ssl?: SSLMode
+    caPath?: string
 }
 
 
@@ -56,6 +51,8 @@ export type ConnectionConfig = {
     int8toBigint: boolean,
     queryTimeout: number
     syncShedule: "beforeMicrotask" | "afterMicrotask" | "Immediate"
+    ssl: SSLMode
+    caPath?: string
 }
 
 

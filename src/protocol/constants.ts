@@ -30,7 +30,9 @@ export const ResponseTypes = {
     ParameterDescription: "t",
     NoData: "n",
     Notice: "N",
-    NotificationResponse: "A"
+    NotificationResponse: "A",
+    SSLOk: "S",
+    SSLDenied: "N"
 } as const
 
 
