@@ -1,6 +1,6 @@
 import { Socket } from "net"
 import { ConnectionRequestWriter } from "./protocol/connection-request-writer"
-import { ResponseType, ResponseTypes } from "./protocol/constants"
+import { INT4Length, ResponseType, ResponseTypes } from "./protocol/constants"
 import { ConnectionResponseReader } from "./protocol/connection-response-reader"
 import { compileSqlTemplate } from "./utils/template-compiler"
 import { ChannelName, ConnectionConfig, ConnectionPartialConfig, QueryMeta, QueryText, Resolvers, Row, StatementName } from "./types"
@@ -80,7 +80,7 @@ export class Connection {
             logLevel: config.logLevel || 'error',
             int8toBigint: config.int8toBigint || false,
             queryTimeout: config.queryTimeout || 30000,
-            syncShedule: config.syncShedule || 'afterMicrotask',
+            syncShedule: config.syncShedule || 'Immediate',
             ssl: config.caPath ? 'require' : (config.ssl || 'prefer')
         }
 
@@ -501,7 +501,7 @@ export class Connection {
                 let query = this._getCurrentQuery()
 
                 if (query instanceof ExecuteQuery) {
-                    reader.skip(length - 4)
+                    reader.skip(length - INT4Length)
                     break
                 }
 
@@ -563,7 +563,9 @@ export class Connection {
             } break
 
 
-            default: console.log('Undeclared response type: ', type);
+            default: {
+                reader.skip(length - INT4Length)
+            } break
         }
     }
 

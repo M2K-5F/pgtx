@@ -96,7 +96,7 @@ export const DataTypeOids = {
 
 export type DataTypeOid = typeof DataTypeOids[keyof typeof DataTypeOids];
 
-
+export const INT4Length = 4
 
 export type ResponseType = ValueOF<typeof ResponseTypes>
 
