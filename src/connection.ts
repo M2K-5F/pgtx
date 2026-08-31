@@ -7,7 +7,7 @@ import { ChannelName, ConnectionConfig, ConnectionPartialConfig, QueryMeta, Quer
 import { Transaction } from "./transaction"
 import { SocketConnector } from "./protocol/socket-connector"
 import { Queue } from "./queue"
-import { CollectQuery, StreamQuery, ExecuteQuery } from "./query"
+import { CollectQuery, StreamQuery, ExecuteQuery, PostgresQuery } from "./query"
 import { sql } from "."
 import { Begin, Future, Ok } from 'fluent-future'
 import { ErrConnectionClosed, ErrConnectionReconnecting, PostgresError } from "./error"
@@ -124,54 +124,55 @@ export class Connection {
      */
     query<T extends Row>(templates: TemplateStringsArray, ...params: any[]) {
         if (this.isClosed) return Future.reject(ErrConnectionClosed)
-            
-        if (this._reconnecting) return this._reconnecting.andThen(() => this._performQuery<T>(templates, ...params))
 
-        return this._performQuery<T>(templates, ...params)
-    }
-
-
-    private _performQuery<T extends Row>(templates: TemplateStringsArray, ...params: any[]): Future<T[], PostgresError> {
-        
-        const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
+        const {text, args} = compileSqlTemplate(templates, params)
         
         if (this.config.logLevel === 'query') {
             console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
         }
 
+        const resolvers = Future.withResolvers<T[], PostgresError>()
+
+        if (this._reconnecting) return this._reconnecting.andThen(() => this._performQuery<T>(text, args, resolvers))
+
+        return this._performQuery<T>(text, args, resolvers)
+    }
+
+
+    private _performQuery<T extends Row>(text: QueryText, args: (string | null)[], resolvers: Resolvers<Future<T[], PostgresError>>): Future<T[], PostgresError> {
         if (this._parsed.has(text)) {
             const meta = this._parsed.get(text)!
             
             const query = new CollectQuery<T>(
-                meta.statement, text, args, meta.columns, this.config.queryTimeout
+                meta.statement, text, args, meta.columns, this.config.queryTimeout, resolvers
             )
             this._registerBatch().registerQuery(query)
 
-            return query.future
+            return query.resolvers.future
         }
 
         if (this._parsing.has(text)) {
             const statement = this._parsing.get(text)!
 
             const query = new CollectQuery<T>(
-                statement, text, args, null, this.config.queryTimeout
+                statement, text, args, null, this.config.queryTimeout, resolvers
             )
 
             this._registerBatch().registerQuery(query)
 
-            return query.future
+            return query.resolvers.future
         }
 
         
         const query = new CollectQuery<T>(
-            this._nextStatement(), text, args, null, this.config.queryTimeout
+            this._nextStatement(), text, args, null, this.config.queryTimeout, resolvers
         )
 
         this._parsing.set(text, query.statement)
         this._registerBatch().registerParse(query)
         this._registerBatch().registerQuery(query)
 
-        return query.future
+        return query.resolvers.future
     }
 
 
@@ -183,48 +184,53 @@ export class Connection {
      */
     execute(templates: TemplateStringsArray, ...params: any[]) {
         if (this.isClosed) return Future.reject(ErrConnectionClosed)
-            
-        if (this._reconnecting) return this._reconnecting.andThen(() => this._performExecute(templates, ...params))
 
-        return this._performExecute(templates, ...params)
-    }
-
-
-    private _performExecute(templates: TemplateStringsArray, ...params: any[]): Future<void, PostgresError> {
-
-        const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
+        const {text, args} = compileSqlTemplate(templates, params)
         
         if (this.config.logLevel === 'query') {
             console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
         }
 
+        const resolvers = Future.withResolvers<void, PostgresError>()
+            
+        if (this._reconnecting) return this._reconnecting.andThen(() => this._performExecute(text, args, resolvers))
+
+        return this._performExecute(text, args, resolvers)
+    }
+
+
+    private _performExecute(text: QueryText, args: (string | null)[], resolvers: Resolvers<Future<void, PostgresError>>): Future<void, PostgresError> {
         if (this._parsed.has(text)) {
             const meta = this._parsed.get(text)!
             
             const query = new ExecuteQuery(
-                meta.statement, text, args, this.config.queryTimeout
+                meta.statement, text, args, this.config.queryTimeout, resolvers
             )
             this._registerBatch().registerQuery(query)
             
-            return query.future
+            return query.resolvers.future
         }
 
         if (this._parsing.has(text)) {
             const statement = this._parsing.get(text)!
-            const query = new ExecuteQuery(statement, text, args, this.config.queryTimeout)
+            const query = new ExecuteQuery(
+                statement, text, args, this.config.queryTimeout, resolvers
+            )
 
             this._registerBatch().registerQuery(query)
 
-            return query.future
+            return query.resolvers.future
         }
 
-        const query = new ExecuteQuery(this._nextStatement(), text, args, this.config.queryTimeout)
+        const query = new ExecuteQuery(
+            this._nextStatement(), text, args, this.config.queryTimeout, resolvers
+        )
 
         this._parsing.set(text, query.statement)
         this._registerBatch().registerParse(query)
         this._registerBatch().registerQuery(query)
 
-        return query.future
+        return query.resolvers.future
     }
 
 
@@ -310,6 +316,12 @@ export class Connection {
      */
     stream<T extends Row>(templates: TemplateStringsArray, ...params: any[]) {
         if (this.isClosed) throw ErrConnectionClosed
+
+        const {text, args} = compileSqlTemplate(templates, params)
+        
+        if (this.config.logLevel === 'query') {
+            console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
+        }
         
         let controller!: ReadableStreamDefaultController<T>
 
@@ -321,26 +333,19 @@ export class Connection {
 
         if (this._reconnecting) {
             this._reconnecting
-                .tap(() => this._performStream<T>(templates, params, controller))
+                .tap(() => this._performStream<T>(text, args, controller))
                 .tapErr(err => controller.error(err))
 
             return stream
         }
 
-        this._performStream<T>(templates, params, controller)
+        this._performStream<T>(text, args, controller)
 
         return stream
     }
     
 
-    private _performStream<T extends Row>(templates: TemplateStringsArray, params: any[], controller: ReadableStreamDefaultController<T>) {
-        const {text, args} = compileSqlTemplate(templates, params) as {text: QueryText, args: (string | null)[]}
-        
-        if (this.config.logLevel === 'query') {
-            console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
-        }
-
-
+    private _performStream<T extends Row>(text: QueryText, args: (string | null)[], controller: ReadableStreamDefaultController<T>) {
         if (this._parsed.has(text)) {
             const meta = this._parsed.get(text)!
 
@@ -395,11 +400,11 @@ export class Connection {
         this._socket.destroy()
         this._parsed.clear()
         this._parsing.clear()
-        this._activeBatch?.reject(ErrConnectionReconnecting)
+        this._activeBatch?.error(ErrConnectionReconnecting)
         this._activeBatch = null
         
         while (this._batchQueue.hasMore) {            
-            this._batchQueue.shift.reject(ErrConnectionReconnecting)
+            this._batchQueue.shift.error(ErrConnectionReconnecting)
         }
 
         
@@ -431,7 +436,39 @@ export class Connection {
     }
 
 
-    private _getCurrentQuery() {        
+    private _retryQueries(queries: PostgresQuery[]) {
+        const _performRetry = () => {
+            queries.forEach(query => {
+                if (query instanceof CollectQuery) {
+                    return void this._performQuery(
+                        query.text, query.args, query.resolvers
+                    ).recover()
+                }
+
+                if (query instanceof ExecuteQuery) {
+                    return void this._performExecute(
+                        query.text, query.args, query.resolvers
+                    ).recover()
+                
+                }
+
+                if (query instanceof StreamQuery) {
+                    try {
+                        return this._performStream(
+                            query.text, query.args, query.controller
+                        )
+                    } catch { return }
+                }
+            })
+        }
+
+        if (this._reconnecting) return this._reconnecting.tap(() => _performRetry())
+
+        return _performRetry()
+    }
+
+
+    private get _currentQuery() {        
         return this._batchQueue.current.current
     }
 
@@ -446,7 +483,7 @@ export class Connection {
             case ResponseTypes.BindComplete: {
                 reader.readBindComplete()
 
-                const query = this._getCurrentQuery()
+                const query = this._currentQuery
 
                 if (query instanceof ExecuteQuery) {
                     break
@@ -471,7 +508,7 @@ export class Connection {
             case ResponseTypes.NoData: {
                 reader.readNoData()
                 
-                const query = this._getCurrentQuery()
+                const query = this._currentQuery
                 
                 const meta = {statement: query.statement, columns: []}
                 
@@ -484,7 +521,7 @@ export class Connection {
             case ResponseTypes.RowDescription: {
                 const columns = reader.readRowDescription()
 
-                const query = this._getCurrentQuery()
+                const query = this._currentQuery
                 
                 const meta = {
                     statement: query.statement, columns
@@ -498,7 +535,7 @@ export class Connection {
 
 
             case ResponseTypes.DataRow: {
-                let query = this._getCurrentQuery()
+                let query = this._currentQuery
 
                 if (query instanceof ExecuteQuery) {
                     reader.skip(length - INT4Length)
@@ -512,11 +549,9 @@ export class Connection {
             case ResponseTypes.ComandComplete: {
                 reader.readCommandComplete()
 
-                const query = this._getCurrentQuery()
+                const query = this._currentQuery
                 
-                query.resolve()
-                
-                this._batchQueue.current.next()
+                query.complete()
             } break
 
 
@@ -529,17 +564,21 @@ export class Connection {
 
                 this._parsing.clear()
 
-                this._batchQueue.current.reject(error)
+                this._currentQuery.error(error)
+                // this._retryQueries(this._batchQueue.current.residual)
             } break
 
 
             case ResponseTypes.ReadyForQuery: {
                 reader.readReadyForQuery()
                 
-                this._batchQueue.next()
-                
-                this._closing && !this._hasQueries && this._closing.resolve()
-                
+                this._batchQueue.current.next()
+
+                if (!this._batchQueue.current.hasMore) {
+                    this._batchQueue.next()
+
+                    this._closing && !this._hasQueries && this._closing.resolve()
+                }
             } break
 
 

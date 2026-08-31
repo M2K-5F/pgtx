@@ -42,6 +42,8 @@ export class Queue<T> {
 
 
     get isFree() {return this._pointer >= this._queue.length}
+
+    get residual() {return this._queue.slice(this._pointer)}
 }
 
 

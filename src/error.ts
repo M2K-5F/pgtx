@@ -14,34 +14,45 @@ export class PostgresError extends Error {
         this.name = "PostgresError"
     }
 
-
-    // Parse error
     get isParseError(): boolean {
-        return this.code.startsWith('42')
+        return (
+            this.code.startsWith('42') || 
+            this.code === '26000'         
+        )
     }
 
-
-    // Execute error
-    get isDeadlock(): boolean {
-        return this.code === '40P01'
+    get isBindError(): boolean {
+        return (
+            this.code.startsWith('22') || 
+            this.code === '0A000'         
+        )
     }
 
+    get isPlanInvalidationError(): boolean {
+        return this.code === '0A000' || this.code === '42P05'   
+    }
 
-    // Execute error
+    get shouldInvalidateStatementCache(): boolean {
+        return this.isParseError || this.isBindError || this.isPlanInvalidationError
+    }
+
     get isConstraintViolation(): boolean {
         return this.code.startsWith('23')
     }
 
+    get isDeadlock(): boolean {
+        return this.code === '40P01'
+    }
 
     get isTimeout(): boolean {
         return this.code === '57014'
     }
 
-
     get isConnectionFailure(): boolean {
-        return this.code.startsWith('08') || this.code.startsWith('57') && this.code !== '57014'
+        return this.code.startsWith('08') || (this.code.startsWith('57') && this.code !== '57014')
     }
 }
+
 
 export const ErrNonceMismatch = new PostgresError("Protocol violation: server nonce doesn't match client nonce")
 export const ErrPasswordRequired = new PostgresError('The authorization method requires a password.')

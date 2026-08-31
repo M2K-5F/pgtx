@@ -4,6 +4,7 @@ import { Queue, RingQueue } from "./queue";
 import { Begin, Future, Ok } from "fluent-future";
 import { ErrPoolClosed, PostgresError } from "./error";
 import { PoolConfig, PoolPartialConfig, Row, Waiter } from "./types";
+import { compileSqlTemplate } from "./utils/template-compiler";
 
 
 /**
@@ -174,7 +175,7 @@ export class Pool {
      * @example
      * for await (const row of pool.stream<User>`SELECT * FROM orders`) { ... }
      */
-    stream<T extends Row>(templates: TemplateStringsArray, ...args: any[]): ReadableStream<T> {  
+    stream<T extends Row>(templates: TemplateStringsArray, ...params: any[]): ReadableStream<T> {  
         if (!this._isOpened) throw ErrPoolClosed
 
         while (this._available.hasMore) {
@@ -186,7 +187,7 @@ export class Pool {
             }
 
             this._available.push(conn)
-            return conn.stream<T>(templates, ...args)
+            return conn.stream<T>(templates, ...params)
         }
 
         let controller!: ReadableStreamDefaultController<T>
@@ -200,7 +201,13 @@ export class Pool {
         this.acquire()
             .tap(conn => {
                 this.release(conn) 
-                conn['_performStream']<T>(templates, args, controller)
+                const {text, args} = compileSqlTemplate(templates, params)
+
+                if (this.config.logLevel === 'query') {
+                    console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
+                }
+                
+                conn['_performStream']<T>(text, args, controller)
             })
             .catch(err => {
                 controller.error(err)

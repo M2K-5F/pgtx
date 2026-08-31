@@ -1,12 +1,12 @@
 import { Clause } from "../clauses/abstract.clause"
-import { ClauseStrategyParams, CompiledSqlQuery } from "../types"
+import { ClauseStrategyParams, CompiledSqlQuery, QueryText } from "../types"
 
 const cache = new WeakMap<TemplateStringsArray, string>()
 
-export function compileSqlTemplate(templates: TemplateStringsArray, args: unknown[], argOffset = 0): CompiledSqlQuery {
+export function compileSqlTemplate(templates: TemplateStringsArray, args: unknown[], argOffset = 0) {
     const cached = cache.get(templates)
     
-    if (cached) return {args: args.map(prepareValue), text: cached}
+    if (cached) return {args: args.map(prepareValue), text: cached as QueryText}
     
     const templateLength = templates.length
     
@@ -39,7 +39,10 @@ export function compileSqlTemplate(templates: TemplateStringsArray, args: unknow
 
     !args.some(value => value instanceof Clause) && cache.set(templates, query.text)
     
-    return {args: query.args.map(prepareValue), text: query.text}
+    return {
+        args: query.args.map(prepareValue), 
+        text: query.text as QueryText
+    }
 }
 
 

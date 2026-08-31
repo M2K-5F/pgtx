@@ -26,10 +26,15 @@ export class Batch {
         this._buffer
             .writeBind("", query.statement, query.args)
             .writeExecute("")
+            .writeSync()
+    }
+
+    get hasMore() {
+        return this._queryQueue.hasMore
     }
 
     end() {
-        return this._buffer.writeSync()
+        return this._buffer
     }
 
     get current() {
@@ -40,13 +45,17 @@ export class Batch {
         this._queryQueue.next()
     }
 
-    reject(cause: PostgresError) {
-        let counter = 0
-        while (this._queryQueue.hasMore) {
-            counter++
-            this._queryQueue.shift.reject(cause)
-        }
+    get shift() {
+        return this._queryQueue.shift
+    }
 
-        return counter
+    error(cause: PostgresError) {
+        while (this._queryQueue.hasMore) {
+            this._queryQueue.shift.error(cause)
+        }
+    }
+
+    get residual() {
+        return this._queryQueue.residual
     }
 }

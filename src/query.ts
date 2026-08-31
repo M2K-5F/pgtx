@@ -1,4 +1,4 @@
-import { Future } from "fluent-future";
+import { Future, Resolvers } from "fluent-future";
 import { ColumnDescription, QueryMeta, QueryText, Row, StatementName } from "./types";
 import { ErrQueryTimeout, PostgresError } from "./error";
 
@@ -13,21 +13,18 @@ export abstract class Query {
         timeout: number
     ) {
         this._timer = setTimeout(() => {
-            this.reject(ErrQueryTimeout)
+            this.error(ErrQueryTimeout)
         }, timeout)
     }
 
 
-    abstract reject(cause: PostgresError): void
+    abstract error(cause: PostgresError): void
 
-    abstract resolve(...args: any[]): void
+    abstract complete(...args: any[]): void
 }
 
 
 export class CollectQuery<T extends Row> extends Query {
-    public future: Future<T[], PostgresError>
-    private _resolve!: (value: T[]) => void
-    private _reject!: (error: PostgresError) => void
     private _rows: T[] = []
 
     constructor(
@@ -35,14 +32,10 @@ export class CollectQuery<T extends Row> extends Query {
         text: QueryText,
         args: (string | null)[],
         public columns: ColumnDescription[] | null,
-        timeout: number
+        timeout: number,
+        public resolvers: Resolvers<Future<T[], PostgresError>>
     )  {
         super(statement, text, args, timeout)
-
-        const {future, reject, resolve} = Future.withResolvers<T[], PostgresError>()
-        this.future = future
-        this._resolve = resolve
-        this._reject = reject
     }    
 
 
@@ -51,45 +44,39 @@ export class CollectQuery<T extends Row> extends Query {
     }
 
     
-    reject(cause: PostgresError) {
+    error(cause: PostgresError) {
         clearTimeout(this._timer)
-        this._reject(cause)
+        this.resolvers.reject(cause)
     }
 
 
-    resolve() {
+    complete() {
         clearTimeout(this._timer)
-        this._resolve(this._rows)
+        this.resolvers.resolve(this._rows)
     }
 }
 
 
 export class ExecuteQuery extends Query {
-    public future: Future<void, PostgresError>
-    private _resolve!: () => void
-    private _reject!: (error: PostgresError) => void
     constructor(
         statement: StatementName,
         text: QueryText,
         args: (string | null)[],
-        timeout: number
+        timeout: number,
+        public resolvers: Resolvers<Future<void, PostgresError>>
     ) {
         super(statement, text, args, timeout)
-
-        const {future, reject, resolve} = Future.withResolvers<void, PostgresError>()
-
-        this.future = future; this._reject = reject; this._resolve = resolve
     }
 
-    reject(cause: PostgresError) {
+    error(cause: PostgresError) {
         clearTimeout(this._timer)
-        this._reject(cause)
+        this.resolvers.reject(cause)
     }
 
 
-    resolve() {
+    complete() {
         clearTimeout(this._timer)
-        this._resolve()
+        this.resolvers.resolve()
     }
 }
 
@@ -114,13 +101,13 @@ export class StreamQuery<T> extends Query {
     }
 
 
-    reject(cause: PostgresError) {
+    error(cause: PostgresError) {
         clearTimeout(this._timer)
         this.controller.error(cause)
     }
 
 
-    resolve() {
+    complete() {
         clearTimeout(this._timer)
         try {
             this.controller.close()
