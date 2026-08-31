@@ -57,7 +57,7 @@ describe("Connection reconnect and close test", async () => {
         it("should clear cached prepared statement metadata on reconnect", async () => {
             await conn.query`SELECT 1 as value`
 
-            const parsedBefore = conn['_parsed'].size
+            const parsedBefore = Object.keys(conn['_parsed']).length
             assert.ok(parsedBefore > 0)
 
             conn['_socket'].destroy()
@@ -66,7 +66,7 @@ describe("Connection reconnect and close test", async () => {
 
             const result = await conn.query`SELECT 1 as value`
             
-            assert.ok(conn['_parsed'].size === 1)
+            assert.ok(Object.keys(conn['_parsed']).length === 1)
             assert.strictEqual(result[0].value, 1)
         })
 
@@ -105,8 +105,8 @@ describe("Connection reconnect and close test", async () => {
                 attempts++
 
                 if (attempts === 1) {
-                    conn['_parsed'].clear()
-                    conn['_parsing'].clear()
+                    conn['_parsed'] = {}
+                    conn['_parsing'] = {}
                     return Future.reject(new PostgresError("simulated reconnect failure"))
                 }
 

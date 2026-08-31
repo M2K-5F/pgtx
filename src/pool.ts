@@ -202,10 +202,6 @@ export class Pool {
             .tap(conn => {
                 this.release(conn) 
                 const {text, args} = compileSqlTemplate(templates, params)
-
-                if (this.config.logLevel === 'query') {
-                    console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
-                }
                 
                 conn['_performStream']<T>(text, args, controller)
             })

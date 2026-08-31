@@ -12,7 +12,6 @@ import { sql } from "."
 import { Begin, Future, Ok } from 'fluent-future'
 import { ErrConnectionClosed, ErrConnectionReconnecting, PostgresError } from "./error"
 import { ReadableStreamDefaultController } from "stream/web"
-import { Batch } from "./batch"
 import { nextTick } from "process"
 import { authorizeSocket, createSocket, upgradeSocket } from "./protocol/socket-authorization"
 
@@ -37,24 +36,61 @@ const shedule = {
 export class Connection {
     private readonly config: ConnectionConfig
 
-    private _activeBatch: Batch | null = null
+    private _writer = ConnectionRequestWriter.new()
+    private _sheduled = false
+    private _queue = new Queue<PostgresQuery>()
+
     private _closing: Resolvers<Future<void, PostgresError>> | null = null
     private _closed = false
     private _reconnecting: Future<void, PostgresError> | null = null
-    private _cachedBuffer = ConnectionRequestWriter.new()
 
     private _socket: SocketConnector
-    private _batchQueue: Queue<Batch> = new Queue()
 
-    private _parsed = new Map<QueryText, QueryMeta>()
-    private _parsing = new Map<QueryText, StatementName>()
+    private _parsed: Record<QueryText, QueryMeta> = {}
+    private _parsing: Record<QueryText, StatementName> = {}
 
     private _listeningCallbacks = new Map<ChannelName, Set<(payload: string) => void>>()
     private _stmtCounter = 0
 
-
     private _nextStatement() {
         return `s-${this._stmtCounter++}` as StatementName
+    }
+
+    private _registerShedule() {
+        if (!this._sheduled) {
+            this._sheduled = true
+            this._writer.clear()
+            shedule[this.config.syncShedule](() => this._shedule())
+        }
+    }
+
+    private _shedule() {
+        if (this._reconnecting) return
+
+        this._socket.write(this._writer)
+        this._writer.clear()
+        this._sheduled = false
+    }
+
+
+    private _parseQuery(query: PostgresQuery) {
+        this._registerShedule()
+
+        this._writer
+            .writeParse(query.statement, query.text)
+            .writeDescribe(query.statement)
+    }
+
+
+    private _registerQuery(query: PostgresQuery) {
+        this._registerShedule()
+
+        this._queue.push(query)
+
+        this._writer
+            .writeBind("", query.statement, query.args)
+            .writeExecute("")
+            .writeSync()
     }
 
 
@@ -92,29 +128,6 @@ export class Connection {
     }
 
 
-    private _registerBatch() {
-        if (!this._activeBatch) {
-            const batch = new Batch(this._cachedBuffer.clear())
-            this._activeBatch = batch;
-
-            shedule[this.config.syncShedule](() => this._sync(batch))
-
-            return batch
-        }
-
-        return this._activeBatch
-    }
-
-
-    private _sync(batch: Batch) {
-        if (this._reconnecting) return
-
-        this._socket.write(batch.end())
-        this._activeBatch = null
-        this._batchQueue.push(batch)
-    }
-
-
     /**
      * Runs a query, binding template values as `$1, $2, ...`.
      * Parameterized queries are cached as prepared statements.
@@ -126,10 +139,6 @@ export class Connection {
         if (this.isClosed) return Future.reject(ErrConnectionClosed)
 
         const {text, args} = compileSqlTemplate(templates, params)
-        
-        if (this.config.logLevel === 'query') {
-            console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
-        }
 
         const resolvers = Future.withResolvers<T[], PostgresError>()
 
@@ -140,25 +149,32 @@ export class Connection {
 
 
     private _performQuery<T extends Row>(text: QueryText, args: (string | null)[], resolvers: Resolvers<Future<T[], PostgresError>>): Future<T[], PostgresError> {
-        if (this._parsed.has(text)) {
-            const meta = this._parsed.get(text)!
-            
+        if (this.config.logLevel === 'query') { 
+            console.log(
+                `\n\x1b[36m┌─ QUERY ─────────────────────────────────────────\x1b[0m\n`
+                + `\x1b[36m│\x1b[0m ${text}\n` 
+                + `${args.length !== 0 ? `\x1b[36m│\x1b[0m \x1b[90mArguments:\x1b[0m [${args}]\n` : ''}` 
+                + `\x1b[36m└────────────────────────────────────────────────\x1b[0m` 
+            ) 
+        }
+
+        const parsed = this._parsed[text]
+        if (parsed) {
             const query = new CollectQuery<T>(
-                meta.statement, text, args, meta.columns, this.config.queryTimeout, resolvers
+                parsed.statement, text, args, parsed.columns, this.config.queryTimeout, resolvers
             )
-            this._registerBatch().registerQuery(query)
+            this._registerQuery(query)
 
             return query.resolvers.future
         }
 
-        if (this._parsing.has(text)) {
-            const statement = this._parsing.get(text)!
-
+        const parsing = this._parsing[text]
+        if (parsing) {
             const query = new CollectQuery<T>(
-                statement, text, args, null, this.config.queryTimeout, resolvers
+                parsing, text, args, null, this.config.queryTimeout, resolvers
             )
 
-            this._registerBatch().registerQuery(query)
+            this._registerQuery(query)
 
             return query.resolvers.future
         }
@@ -167,10 +183,10 @@ export class Connection {
         const query = new CollectQuery<T>(
             this._nextStatement(), text, args, null, this.config.queryTimeout, resolvers
         )
-
-        this._parsing.set(text, query.statement)
-        this._registerBatch().registerParse(query)
-        this._registerBatch().registerQuery(query)
+        
+        this._parsing[text] = query.statement
+        this._parseQuery(query)
+        this._registerQuery(query)
 
         return query.resolvers.future
     }
@@ -186,10 +202,6 @@ export class Connection {
         if (this.isClosed) return Future.reject(ErrConnectionClosed)
 
         const {text, args} = compileSqlTemplate(templates, params)
-        
-        if (this.config.logLevel === 'query') {
-            console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
-        }
 
         const resolvers = Future.withResolvers<void, PostgresError>()
             
@@ -200,24 +212,32 @@ export class Connection {
 
 
     private _performExecute(text: QueryText, args: (string | null)[], resolvers: Resolvers<Future<void, PostgresError>>): Future<void, PostgresError> {
-        if (this._parsed.has(text)) {
-            const meta = this._parsed.get(text)!
-            
+        if (this.config.logLevel === 'query') { 
+            console.log( 
+                `\n\x1b[35m┌─ EXECUTE ──────────────────────────────────────\x1b[0m\n` 
+                + `\x1b[35m│\x1b[0m ${text}\n` 
+                + `${args.length !== 0 ? `\x1b[35m│\x1b[0m \x1b[90mArguments:\x1b[0m [${args}]\n` : ''}` 
+                + `\x1b[35m└────────────────────────────────────────────────\x1b[0m` 
+            ) 
+        }
+
+        const parsed = this._parsed[text]
+        if (parsed) {           
             const query = new ExecuteQuery(
-                meta.statement, text, args, this.config.queryTimeout, resolvers
+                parsed.statement, text, args, this.config.queryTimeout, resolvers
             )
-            this._registerBatch().registerQuery(query)
+            this._registerQuery(query)
             
             return query.resolvers.future
         }
 
-        if (this._parsing.has(text)) {
-            const statement = this._parsing.get(text)!
+        const parsing = this._parsing[text]
+        if (parsing) {
             const query = new ExecuteQuery(
-                statement, text, args, this.config.queryTimeout, resolvers
+                parsing, text, args, this.config.queryTimeout, resolvers
             )
 
-            this._registerBatch().registerQuery(query)
+            this._registerQuery(query)
 
             return query.resolvers.future
         }
@@ -226,11 +246,91 @@ export class Connection {
             this._nextStatement(), text, args, this.config.queryTimeout, resolvers
         )
 
-        this._parsing.set(text, query.statement)
-        this._registerBatch().registerParse(query)
-        this._registerBatch().registerQuery(query)
+        this._parsing[text] = query.statement
+        this._parseQuery(query)
+        this._registerQuery(query)
 
         return query.resolvers.future
+    }
+
+
+    /**
+     * Streams query results as a `ReadableStream`, without buffering rows in memory.
+     * Ideal for large result sets or piping straight into an HTTP response.
+     *
+     * @example
+     * for await (const row of conn.stream<User>`SELECT * FROM orders`) { ... }
+     */
+    stream<T extends Row>(templates: TemplateStringsArray, ...params: any[]) {
+        if (this.isClosed) throw ErrConnectionClosed
+
+        const {text, args} = compileSqlTemplate(templates, params)
+        
+        let controller!: ReadableStreamDefaultController<T>
+
+        const stream = new ReadableStream<T>({
+            start: c => {
+                controller = c
+            }
+        })
+
+        if (this._reconnecting) {
+            this._reconnecting
+                .tap(() => this._performStream<T>(text, args, controller))
+                .tapErr(err => controller.error(err))
+
+            return stream
+        }
+
+        this._performStream<T>(text, args, controller)
+
+        return stream
+    }
+    
+
+    private _performStream<T extends Row>(text: QueryText, args: (string | null)[], controller: ReadableStreamDefaultController<T>) {
+        if (this.config.logLevel === 'query') { 
+            console.log( 
+                `\n\x1b[34m┌─ STREAM ───────────────────────────────────────\x1b[0m\n` 
+                + `\x1b[34m│\x1b[0m ${text}\n` 
+                + `${args.length !== 0 ? `\x1b[34m│\x1b[0m \x1b[90mArguments:\x1b[0m [${args}]\n` : ''}` 
+                + `\x1b[34m└────────────────────────────────────────────────\x1b[0m` 
+            ) 
+        }
+
+        const parsed = this._parsed[text]
+        if (parsed) {
+            const query = new StreamQuery<T>(
+                parsed.statement, text, args, 
+                controller, parsed.columns, 
+                this.config.queryTimeout
+            )
+            this._registerQuery(query)
+
+            return
+        }
+
+        const parsing = this._parsing[text]
+        if (parsing) {
+            const query = new StreamQuery(
+                parsing, text, args, controller, 
+                null, this.config.queryTimeout
+            )
+
+            this._registerQuery(query)
+
+            return
+        }
+        
+        const query = new StreamQuery<T>(
+            this._nextStatement(), 
+            text, args, controller, 
+            null, this.config.queryTimeout
+        )
+
+        this._parsing[text] = query.statement
+        this._parseQuery(query)
+        this._registerQuery(query)
     }
 
 
@@ -305,80 +405,6 @@ export class Connection {
         
         return Ok()
     }
-
-
-    /**
-     * Streams query results as a `ReadableStream`, without buffering rows in memory.
-     * Ideal for large result sets or piping straight into an HTTP response.
-     *
-     * @example
-     * for await (const row of conn.stream<User>`SELECT * FROM orders`) { ... }
-     */
-    stream<T extends Row>(templates: TemplateStringsArray, ...params: any[]) {
-        if (this.isClosed) throw ErrConnectionClosed
-
-        const {text, args} = compileSqlTemplate(templates, params)
-        
-        if (this.config.logLevel === 'query') {
-            console.log(`\nQUERY:     ${text}\n${args.length !== 0 ? `ARGUMENTS: [${args}]\n` : ""}`)
-        }
-        
-        let controller!: ReadableStreamDefaultController<T>
-
-        const stream = new ReadableStream<T>({
-            start: c => {
-                controller = c
-            }
-        })
-
-        if (this._reconnecting) {
-            this._reconnecting
-                .tap(() => this._performStream<T>(text, args, controller))
-                .tapErr(err => controller.error(err))
-
-            return stream
-        }
-
-        this._performStream<T>(text, args, controller)
-
-        return stream
-    }
-    
-
-    private _performStream<T extends Row>(text: QueryText, args: (string | null)[], controller: ReadableStreamDefaultController<T>) {
-        if (this._parsed.has(text)) {
-            const meta = this._parsed.get(text)!
-
-            const query = new StreamQuery<T>(
-                meta.statement, text, args, 
-                controller, meta.columns, 
-                this.config.queryTimeout
-            )
-            this._registerBatch().registerQuery(query)
-
-            return
-        }
-
-        if (this._parsing.has(text)) {
-            const statement = this._parsing.get(text)!
-
-            const query = new StreamQuery(statement, text, args, controller, null, this.config.queryTimeout)
-
-            this._registerBatch().registerQuery(query)
-
-            return
-        }
-        
-        const query = new StreamQuery<T>(
-            this._nextStatement(), 
-            text, args, controller, 
-            null, this.config.queryTimeout
-        )
-
-        this._parsing.set(text, query.statement)
-        this._registerBatch().registerParse(query)
-        this._registerBatch().registerQuery(query)
-    }
     
 
     private _reconnect() {
@@ -398,14 +424,14 @@ export class Connection {
 
     private _performReconnect() {
         this._socket.destroy()
-        this._parsed.clear()
-        this._parsing.clear()
-        this._activeBatch?.error(ErrConnectionReconnecting)
-        this._activeBatch = null
-        
-        while (this._batchQueue.hasMore) {            
-            this._batchQueue.shift.error(ErrConnectionReconnecting)
+        this._parsed = {}
+        this._parsing = {}
+        this._sheduled = false
+
+        while (this._queue.hasMore) {
+            this._queue.shift.error(ErrConnectionReconnecting)
         }
+        this._writer.clear()
 
         
         return createSocket(this.config)
@@ -436,40 +462,8 @@ export class Connection {
     }
 
 
-    private _retryQueries(queries: PostgresQuery[]) {
-        const _performRetry = () => {
-            queries.forEach(query => {
-                if (query instanceof CollectQuery) {
-                    return void this._performQuery(
-                        query.text, query.args, query.resolvers
-                    ).recover()
-                }
-
-                if (query instanceof ExecuteQuery) {
-                    return void this._performExecute(
-                        query.text, query.args, query.resolvers
-                    ).recover()
-                
-                }
-
-                if (query instanceof StreamQuery) {
-                    try {
-                        return this._performStream(
-                            query.text, query.args, query.controller
-                        )
-                    } catch { return }
-                }
-            })
-        }
-
-        if (this._reconnecting) return this._reconnecting.tap(() => _performRetry())
-
-        return _performRetry()
-    }
-
-
     private get _currentQuery() {        
-        return this._batchQueue.current.current
+        return this._queue.current
     }
 
 
@@ -490,7 +484,7 @@ export class Connection {
                 }
 
                 if (!query.columns) {
-                    query.columns = this._parsed.get(query.text)!.columns
+                    query.columns = this._parsed[query.text].columns
                 }
             } break
 
@@ -512,9 +506,10 @@ export class Connection {
                 
                 const meta = {statement: query.statement, columns: []}
                 
-                this._parsing.delete(query.text)
+                
+                delete this._parsing[query.text] 
 
-                this._parsed.set(query.text, meta)
+                this._parsed[query.text] = meta
             } break
 
 
@@ -527,9 +522,9 @@ export class Connection {
                     statement: query.statement, columns
                 }
                 
-                this._parsing.delete(query.text)
+                delete this._parsing[query.text]
 
-                this._parsed.set(query.text, meta)
+                this._parsed[query.text] = meta
             } break
 
 
@@ -558,35 +553,42 @@ export class Connection {
             case ResponseTypes.ErrorResponse: {
                 const error = reader.readErrorResponse()
 
-                if (this.config.logLevel === 'error' || this.config.logLevel === 'notice' || this.config.logLevel === 'query') {
-                    console.log(`\nError:    ${error}\n`)
+                if (this.config.logLevel === 'error' || this.config.logLevel === 'notice' || this.config.logLevel === 'query') { 
+                    console.log( 
+                        `\n\x1b[31m┌─ ERROR ────────────────────────────────────────\x1b[0m\n` 
+                        + `\x1b[31m│\x1b[0m ${error}\n` 
+                        + `\x1b[31m└────────────────────────────────────────────────\x1b[0m\n` 
+                    ) 
                 }
 
-                this._parsing.clear()
+                const query = this._currentQuery
 
-                this._currentQuery.error(error)
-                // this._retryQueries(this._batchQueue.current.residual)
+                if (error.isParseError) {
+                    delete this._parsing[query.text]
+                }
+
+                query.error(error)
             } break
 
 
             case ResponseTypes.ReadyForQuery: {
                 reader.readReadyForQuery()
                 
-                this._batchQueue.current.next()
+                this._queue.next()
 
-                if (!this._batchQueue.current.hasMore) {
-                    this._batchQueue.next()
-
-                    this._closing && !this._hasQueries && this._closing.resolve()
-                }
+                this._closing && this._queue.isFree && this._closing.resolve()    
             } break
 
 
             case ResponseTypes.Notice: {
                 const message = reader.readErrorResponse()
                 
-                if (this.config.logLevel === 'notice' || this.config.logLevel === 'query') {
-                    console.log(`\nError:    ${message}\n`)
+                if (this.config.logLevel === 'notice' || this.config.logLevel === 'query') { 
+                    console.log( 
+                        `\n\x1b[33m┌─ NOTICE ───────────────────────────────────────\x1b[0m\n` 
+                        + `\x1b[33m│\x1b[0m ${message}\n` 
+                        + `\x1b[33m└────────────────────────────────────────────────\x1b[0m\n` 
+                    ) 
                 }
             } break
 
@@ -606,11 +608,6 @@ export class Connection {
                 reader.skip(length - INT4Length)
             } break
         }
-    }
-
-
-    private get _hasQueries() {
-        return this._batchQueue.hasMore || this._activeBatch
     }
 
 
@@ -636,7 +633,7 @@ export class Connection {
             return this._closing.future
         }        
 
-        if (!this._hasQueries) {
+        if (this._queue.isFree) {
             this._closed = true
             this._socket.destroy()
             return Future.resolve()

@@ -86,15 +86,6 @@ jobs:
         run: |
           sudo apt install wrk
 
-      - name: Run native mitata benchmark
-        run: npx tsx benchmark.ts
-        env:
-          PGHOST: localhost
-          PGPORT: 5433
-          PGUSER: postgres
-          PGPASSWORD: postgres
-          PGDATABASE: pgtx_test
-
       - name: Seed database for wrk
         run: |
           sudo apt-get install -y postgresql-client
