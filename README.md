@@ -3,9 +3,7 @@
 [![Tests](https://github.com/M2K-5F/pgtx/actions/workflows/tests.yaml/badge.svg)](https://github.com/M2K-5F/pgtx/actions/workflows/tests.yaml)
 [![npm version](https://img.shields.io/npm/v/@m2k-5f/pgtx.svg)](https://www.npmjs.com/package/@m2k-5f/pgtx)
 
-A PostgreSQL driver for Node.js that pipelines everything by default, caches prepared statements without asking, and doesn't ship a single dependency.
-
-It exists because `pg` leaves throughput on the table and `postgres.js`, while fast, still isn't fast enough once you actually saturate a connection pool. Pgtx is built around one idea: batch what can be batched, write to the socket once, and get out of the way.
+A PostgreSQL driver for Node.js with an API that doesn't require a manual to use. Built for regular applications, not for people who need four different flavors of the same stream implementation or a config object with forty optional fields you'll never touch.
 
 ```bash
 npm install @m2k-5f/pgtx
@@ -25,8 +23,9 @@ const pool = new Pool({
 
 const [user] = await pool.query<User>`SELECT * FROM users WHERE id = ${1}`
 
+// returns rows → query, doesn't → execute
 await pool.execute`
-  INSERT INTO users ${sql.insert([{ name: 'Alice', age: 25 }, { name: 'Bob', age: 30 }])}
+  INSERT INTO users ${sql.insert<User>([{ name: 'Alice', age: 25 }, { name: 'Bob', age: 30 }])}
 `
 
 await pool.begin(async tx => {
@@ -43,17 +42,33 @@ Benchmarks run on GitHub Actions (Ubuntu, 2 vCPUs), reproducible, sources in thi
  
 **HTTP throughput against `postgres.js` and Bun's own native `Bun.sql` driver, on Bun:**
  
-| Connections | Pgtx | Postgres.js | Bun.sql | vs Postgres.js | vs Bun.sql |
-|---:|---:|---:|---:|---:|---:|
-| 50 | **27,885 req/s** | 8,967 req/s | 10,170 req/s | 3.11× | 2.74× |
-| 200 | **31,975 req/s** | 9,861 req/s | 11,725 req/s | 3.24× | 2.73× |
-| 500 | **31,245 req/s** | 8,289 req/s | 11,005 req/s | 3.77× | 2.84× |
+| Connections | Pgtx | Postgres.js | Bun.sql |
+|---:|---:|---:|---:|
+| 50 | **21,093 req/s** | 8,967 req/s | 10,170 req/s |
+| 200 | **22,731 req/s** | 9,861 req/s | 11,725 req/s |
+| 500 | **22,673 req/s** | 8,289 req/s | 11,005 req/s |
  
-Bun.sql is Bun's own built-in driver, written in native code and generally treated as the speed baseline in that ecosystem. Pgtx stays 2.7-2.8× ahead of it at every concurrency level tested — the gap doesn't come from JS-vs-native, it comes from the protocol.
+Bun.sql is Bun's own built-in driver, written in native code and generally treated as the speed baseline in that ecosystem. Pgtx stays ahead of it at every concurrency level tested — the gap doesn't come from JS-vs-native, it comes from the protocol implementation.
  
 **How:** everything you fire concurrently against the same connection gets folded into one pipelined write — Parse/Bind/Execute for every query in the batch goes out in a single `socket.write()`, and results get demuxed as they come back, in order, without buffering rows you haven't asked for yet. Prepared statements are cached and deduplicated automatically, row descriptions are cached alongside them, and the binary protocol skips text (de)serialization where it can. None of this requires you to change how you write queries.
 
 ## The parts worth knowing about
+
+
+### Every query is its own commit boundary
+
+Fire off several queries in the same batch and one of them fails — the others aren't affected. Each query gets its own Sync, which means its own implicit transaction: an error in query B doesn't undo query A, even if A already returned and B is still in flight on the same pipelined write.
+
+```typescript
+const [a, b] = await Promise.allSettled([
+  pool.execute`UPDATE accounts SET balance = balance + 100 WHERE id = ${1}`,
+  pool.execute`INSERT INTO accounts (id) VALUES (${1})` // duplicate key, fails
+])
+// a: fulfilled, the balance update is committed regardless of b's outcome
+```
+
+This isolation is per-statement, not free-standing atomicity across statements — if you need several queries to succeed or fail together, that's what `begin()` and `savepoint()` are for. Outside a transaction, every query stands on its own.
+
 
 ### Errors you can pattern-match on
 
@@ -66,9 +81,24 @@ const users = await pool.query<User>`SELECT * FROM users WHERE id = ${1}`
   .tapErr(err => logger.error(err))
 ```
 
+
+### Transactions and savepoints
+
+```typescript
+await pool.begin(async tx => {
+  await tx.execute`INSERT INTO orders (user_id) VALUES (${userId})`
+
+  await tx.savepoint('reserve_stock', async stx => {
+    await stx.execute`UPDATE stock SET count = count - 1 WHERE product_id = ${productId}`
+    if (outOfStock) throw new Error('out of stock') // only the savepoint rolls back
+  }).tapErr(console.log)
+})
+```
+
+
 ### Pipelining is automatic, not opt-in
 
-`Bind`/`.bind` from fluent-future group independent queries into the same pipeline batch for you:
+`Bind`/`.bind` from [fluent-future](https://www.npmjs.com/package/fluent-future) group independent queries into the same pipeline batch for you:
 
 ```typescript
 // 5 queries, 2 round-trips
@@ -94,29 +124,16 @@ for await (const log of pool.stream<Log>`SELECT * FROM application_logs WHERE le
 }
 ```
 
+
 It's a real Web Streams object, so it drops straight into an HTTP response body:
 
 ```typescript
-export default {
-  async fetch(req) {
-    const stream = pool.stream`SELECT id, email FROM giant_user_table`
-    return new Response(stream, { headers: { "Content-Type": "application/json" } })
-  }
+fetch(req) {
+  const stream = pool.stream`SELECT id, email FROM giant_user_table`
+  return new Response(stream, { headers: { "Content-Type": "application/json" } })
 }
 ```
 
-### Transactions and savepoints
-
-```typescript
-await pool.begin(async tx => {
-  await tx.execute`INSERT INTO orders (user_id) VALUES (${userId})`
-
-  await tx.savepoint('reserve_stock', async stx => {
-    await stx.execute`UPDATE stock SET count = count - 1 WHERE product_id = ${productId}`
-    if (outOfStock) throw new Error('out of stock') // only the savepoint rolls back
-  }).tapErr(console.log)
-})
-```
 
 ### LISTEN / NOTIFY without babysitting a connection
 
@@ -199,10 +216,10 @@ interface ConnectionPartialConfig {
   host: string
   port: number
   database: string
-  logLevel?: 'error' | 'notice' | 'query'   // default 'error'
+  logLevel?: 'error' | 'notice' | 'query' | "none"   // default 'error'
   int8toBigint?: boolean                     // default false
-  queryTimeout?: number                      // default 30000
-  syncShedule?: 'beforeMicrotask' | 'afterMicrotask' | 'Immediate'  // default 'afterMicrotask'
+  queryTimeout?: number                      // default 30000 (ms)
+  syncShedule?: 'beforeMicrotask' | 'afterMicrotask' | 'Immediate'  // default 'Immediate'
   ssl?: 'disable' | 'prefer' | 'require' // defaut 'prefer' 
   caPath?: string // forces `ssl` to 'require' if provided
 }
