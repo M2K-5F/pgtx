@@ -31,6 +31,6 @@ describe("fragment clause test", () => {
             params.text, 
             "INSERT INTO users (role_id) VALUES ((SELECT id FROM roles where role_name = $1 limit $2)) WHERE id = $3"
         )
-        assert(params.args, ["admin", "1", "1"])
+        assert(params.args, ["admin", 1, 1])
     })
 })

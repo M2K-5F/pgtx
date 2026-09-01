@@ -48,7 +48,6 @@ test('StreamQuery - Streaming test', async () => {
     assert.strictEqual(receivedUsers[3].name, 'David')
 
     await pool.query`DROP TABLE IF EXISTS test_stream_users;`
-    console.log('closing');
     
     await pool.close()
 })
@@ -66,7 +65,6 @@ test('StreamQuery - Correct error handling', async () => {
         assert.strictEqual(error.severity, 'ERROR')
         assert.strictEqual(error.code, '42P01')
     }
-    console.log('closing');
     
     await pool.close()
 })

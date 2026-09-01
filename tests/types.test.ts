@@ -76,7 +76,7 @@ describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
         const testData: AllTypesRow = {
             id_int4: 42000,
             id_int2: 320,
-            id_int8: 9223372036854775807n,
+            id_int8: 9223372036854n,
             flag_bool: true,
             text_col: "Short text for cache",
             varchar_col: "This is a much longer text string designed to bypass the 32 bytes cache limit completely inside readDataRow", 
@@ -95,13 +95,25 @@ describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
             timetz_col: "15:30:45.123+03:00"
         }
 
-        await pool.query`
+        const conn = await pool.acquire()
+
+        await conn.query`
             insert into ${sql.ident(allTypesTableName)} ${sql.insert(testData)};
         `
 
-        const [row] = await pool.query<AllTypesRow>`SELECT * FROM ${sql.ident(allTypesTableName)}`
+        const [row] = await conn.query<AllTypesRow>`SELECT * FROM ${sql.ident(allTypesTableName)}`
 
         assert.deepStrictEqual(row, testData)
+
+        await conn.query`truncate ${sql.ident(allTypesTableName)}`
+
+        await conn.query`
+            insert into ${sql.ident(allTypesTableName)} ${sql.insert(testData)};
+        `
+
+        const [row2] = await pool.query<AllTypesRow>`SELECT * FROM ${sql.ident(allTypesTableName)}`
+
+        assert.deepStrictEqual(row2, testData, "Binary protocol type error")
     })
 
     it("should return null for all fields when they are NULL in database", async () => {

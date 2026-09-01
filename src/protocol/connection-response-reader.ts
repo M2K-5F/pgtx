@@ -1,5 +1,5 @@
 import { AuthenticationCode, DataTypeOid, DataTypeOids, INT4Length, ResponseType, TransactionStatus } from "./constants"
-import { ChannelName, ColumnDescription } from "../types"
+import { ChannelName, ColumnDescription, ParameterDescription } from "../types"
 import { PostgresError } from "../error"
 
 
@@ -492,10 +492,15 @@ export class ConnectionResponseBuffer {
     }
 
 
-    readParameterDescription() {
+    readParameterDescription(): ParameterDescription {
         const count = this.readInt16()
+
+        const description = Array<DataTypeOid>(count)
+
         for (let i = 0; i < count; i++) {
-            this.readInt32()
+            description[i] = this.readInt32() as DataTypeOid
         }
+
+        return description
     }
 }

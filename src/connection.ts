@@ -1,7 +1,7 @@
 import { Socket } from "net"
-import { INT4Length, ResponseType, ResponseTypes } from "./protocol/constants"
-import { compileSqlTemplate } from "./utils/template-compiler"
-import { ChannelName, ConnectionConfig, ConnectionPartialConfig, QueryMeta, QueryText, Resolvers, Row, StatementName } from "./types"
+import { DescribeType, EMPTY_ARRAY, INT4Length, ResponseType, ResponseTypes } from "./protocol/constants"
+import { compileSqlTemplate } from "./utils"
+import { ChannelName, ConnectionConfig, ConnectionPartialConfig, StatementMeta, QueryText, Resolvers, Row, StatementName } from "./types"
 import { Transaction } from "./transaction"
 import { SocketConnector } from "./protocol/socket-connector"
 import { Queue } from "./queue"
@@ -46,7 +46,7 @@ export class Connection {
 
     private _socket: SocketConnector
 
-    private _parsed: Record<QueryText, QueryMeta> = {}
+    private _parsed: Record<QueryText, StatementMeta> = {}
     private _parsing: Record<QueryText, StatementName> = {}
 
     private _listeningCallbacks = new Map<ChannelName, Set<(payload: string) => void>>()
@@ -78,7 +78,7 @@ export class Connection {
 
         this._writer
             .writeParse(query.statement, query.text)
-            .writeDescribe(query.statement)
+            .writeDescribe(DescribeType.Statement, query.statement)
     }
 
 
@@ -88,7 +88,7 @@ export class Connection {
         this._queue.push(query)
 
         this._writer
-            .writeBind("", query.statement, query.args)
+            .writeBind("", query.statement, query.args, this._parsed[query.text]?.parameters)
             .writeExecute("")
             .writeSync()
     }
@@ -148,7 +148,7 @@ export class Connection {
     }
 
 
-    private _performQuery<T extends Row>(text: QueryText, args: (string | null)[], resolvers: Resolvers<Future<T[], PostgresError>>): Future<T[], PostgresError> {
+    private _performQuery<T extends Row>(text: QueryText, args: unknown[], resolvers: Resolvers<Future<T[], PostgresError>>): Future<T[], PostgresError> {
         if (this.config.logLevel === 'query') { 
             console.log(
                 `\n\x1b[36m┌─ QUERY ─────────────────────────────────────────\x1b[0m\n`
@@ -211,7 +211,7 @@ export class Connection {
     }
 
 
-    private _performExecute(text: QueryText, args: (string | null)[], resolvers: Resolvers<Future<void, PostgresError>>): Future<void, PostgresError> {
+    private _performExecute(text: QueryText, args: unknown[], resolvers: Resolvers<Future<void, PostgresError>>): Future<void, PostgresError> {
         if (this.config.logLevel === 'query') { 
             console.log( 
                 `\n\x1b[35m┌─ EXECUTE ──────────────────────────────────────\x1b[0m\n` 
@@ -288,7 +288,7 @@ export class Connection {
     }
     
 
-    private _performStream<T extends Row>(text: QueryText, args: (string | null)[], controller: ReadableStreamDefaultController<T>) {
+    private _performStream<T extends Row>(text: QueryText, args: unknown[], controller: ReadableStreamDefaultController<T>) {
         if (this.config.logLevel === 'query') { 
             console.log( 
                 `\n\x1b[34m┌─ STREAM ───────────────────────────────────────\x1b[0m\n` 
@@ -470,6 +470,7 @@ export class Connection {
     private _handlePacket(type: ResponseType, length: number, reader: ConnectionResponseBuffer) {
         switch (type) {
             case ResponseTypes.ParseComplete: 
+            case ResponseTypes.NoData:
             case ResponseTypes.CloseComplete: break
 
 
@@ -486,30 +487,29 @@ export class Connection {
             } break
 
 
-            case ResponseTypes.NoData: {                
+            case ResponseTypes.ParameterDescription: {
                 const query = this._currentQuery
-                
-                const meta = {statement: query.statement, columns: []}
-                
-                
-                delete this._parsing[query.text] 
 
+                const description = reader.readParameterDescription()
+
+                const meta: StatementMeta = {
+                    statement: query.statement,
+                    parameters: description,
+                    columns: EMPTY_ARRAY
+                }
+
+                delete this._parsing[query.text] 
+                
                 this._parsed[query.text] = meta
             } break
 
 
             case ResponseTypes.RowDescription: {
+                const query = this._currentQuery
+
                 const columns = reader.readRowDescription()
 
-                const query = this._currentQuery
-                
-                const meta = {
-                    statement: query.statement, columns
-                }
-                
-                delete this._parsing[query.text]
-
-                this._parsed[query.text] = meta
+                this._parsed[query.text].columns = columns
             } break
 
 

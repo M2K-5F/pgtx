@@ -62,9 +62,12 @@ export type QueryText = Branded<string, 'QueryText'>
 
 export type ChannelName = Branded<string, "ChannelName">
 
-export type QueryMeta = {
+export type ParameterDescription = DataTypeOid[]
+
+export type StatementMeta = {
     statement: StatementName
-    columns: ColumnDescription[]
+    columns: ColumnDescription[],
+    parameters: ParameterDescription
 }
 
 

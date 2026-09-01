@@ -1,5 +1,5 @@
 import { Future, Resolvers } from "fluent-future";
-import { ColumnDescription, QueryMeta, QueryText, Row, StatementName } from "./types";
+import { ColumnDescription, QueryText, Row, StatementName } from "./types";
 import { ErrQueryTimeout, PostgresError } from "./error";
 
 
@@ -9,7 +9,7 @@ export abstract class Query {
     constructor(
         public statement: StatementName,
         public text: QueryText,
-        public args: (string | null)[],
+        public args: unknown[],
         timeout: number
     ) {
         this._timer = setTimeout(() => {
@@ -30,7 +30,7 @@ export class CollectQuery<T extends Row> extends Query {
     constructor(
         statement: StatementName,
         text: QueryText,
-        args: (string | null)[],
+        args: unknown[],
         public columns: ColumnDescription[] | null,
         timeout: number,
         public resolvers: Resolvers<Future<T[], PostgresError>>
@@ -61,7 +61,7 @@ export class ExecuteQuery extends Query {
     constructor(
         statement: StatementName,
         text: QueryText,
-        args: (string | null)[],
+        args: unknown[],
         timeout: number,
         public resolvers: Resolvers<Future<void, PostgresError>>
     ) {
@@ -85,7 +85,7 @@ export class StreamQuery<T> extends Query {
     constructor(
         statement: StatementName,
         text: QueryText,
-        args: (string | null)[],
+        args: unknown[],
         public controller: ReadableStreamDefaultController<T>,
         public columns: ColumnDescription[] | null,
         timeout: number

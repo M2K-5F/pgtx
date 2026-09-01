@@ -119,3 +119,13 @@ export const TransactionStatuses = {
 } as const
 
 export type TransactionStatus = ValueOF<typeof TransactionStatuses>
+
+
+export const DescribeType = {
+    Statement: "S",
+    Portal: "P",
+} as const
+
+export type DescribeType = ValueOF<typeof DescribeType>
+
+export const EMPTY_ARRAY = Object.freeze([]) as never[]

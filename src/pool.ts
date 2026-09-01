@@ -4,7 +4,7 @@ import { Queue, RingQueue } from "./queue";
 import { Begin, Future, Ok } from "fluent-future";
 import { ErrPoolClosed, PostgresError } from "./error";
 import { PoolConfig, PoolPartialConfig, Row, Waiter } from "./types";
-import { compileSqlTemplate } from "./utils/template-compiler";
+import { compileSqlTemplate } from "./utils";
 
 
 /**
