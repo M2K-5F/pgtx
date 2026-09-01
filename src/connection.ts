@@ -1,7 +1,5 @@
 import { Socket } from "net"
-import { ConnectionRequestWriter } from "./protocol/connection-request-writer"
 import { INT4Length, ResponseType, ResponseTypes } from "./protocol/constants"
-import { ConnectionResponseReader } from "./protocol/connection-response-reader"
 import { compileSqlTemplate } from "./utils/template-compiler"
 import { ChannelName, ConnectionConfig, ConnectionPartialConfig, QueryMeta, QueryText, Resolvers, Row, StatementName } from "./types"
 import { Transaction } from "./transaction"
@@ -14,6 +12,8 @@ import { ErrConnectionClosed, ErrConnectionReconnecting, PostgresError } from ".
 import { ReadableStreamDefaultController } from "stream/web"
 import { nextTick } from "process"
 import { authorizeSocket, createSocket, upgradeSocket } from "./protocol/socket-authorization"
+import { ConnectionResponseBuffer } from "./protocol/connection-response-reader"
+import { ConnectionRequestBuffer } from "./protocol/connection-request-writer"
 
 
 const shedule = {
@@ -36,7 +36,7 @@ const shedule = {
 export class Connection {
     private readonly config: ConnectionConfig
 
-    private _writer = ConnectionRequestWriter.new()
+    private _writer = ConnectionRequestBuffer.new(65536)
     private _sheduled = false
     private _queue = new Queue<PostgresQuery>()
 
@@ -467,16 +467,13 @@ export class Connection {
     }
 
 
-    private _handlePacket(type: ResponseType, length: number, reader: ConnectionResponseReader) {
+    private _handlePacket(type: ResponseType, length: number, reader: ConnectionResponseBuffer) {
         switch (type) {
-            case ResponseTypes.ParseComplete: {
-                reader.readParseComplete()
-            } break
+            case ResponseTypes.ParseComplete: 
+            case ResponseTypes.CloseComplete: break
 
 
             case ResponseTypes.BindComplete: {
-                reader.readBindComplete()
-
                 const query = this._currentQuery
 
                 if (query instanceof ExecuteQuery) {
@@ -489,19 +486,7 @@ export class Connection {
             } break
 
 
-            case ResponseTypes.CloseComplete: {
-                reader.readBindComplete()
-            } break
-
-
-            case ResponseTypes.ParameterDescription: {
-                reader.readParameterDescription()
-            } break
-
-
-            case ResponseTypes.NoData: {
-                reader.readNoData()
-                
+            case ResponseTypes.NoData: {                
                 const query = this._currentQuery
                 
                 const meta = {statement: query.statement, columns: []}
@@ -533,7 +518,7 @@ export class Connection {
                 let query = this._currentQuery
 
                 if (query instanceof ExecuteQuery) {
-                    reader.skip(length - INT4Length)
+                    reader.skipBytes(length)
                     break
                 }
 
@@ -542,7 +527,7 @@ export class Connection {
 
 
             case ResponseTypes.ComandComplete: {
-                reader.readCommandComplete()
+                reader.skipBytes(length)
 
                 const query = this._currentQuery
                 
@@ -572,8 +557,7 @@ export class Connection {
 
 
             case ResponseTypes.ReadyForQuery: {
-                reader.readReadyForQuery()
-                
+                reader.skipBytes(length)
                 this._queue.next()
 
                 this._closing && this._queue.isFree && this._closing.resolve()    
@@ -605,7 +589,7 @@ export class Connection {
 
 
             default: {
-                reader.skip(length - INT4Length)
+                reader.skipBytes(length)
             } break
         }
     }

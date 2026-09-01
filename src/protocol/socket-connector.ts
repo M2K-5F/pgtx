@@ -1,7 +1,7 @@
 import { Socket } from 'net'
 import { ResponseType } from './constants'
-import { ConnectionResponseReader } from '../protocol/connection-response-reader'
-import { ConnectionRequestWriter } from '../protocol/connection-request-writer'
+import { ConnectionResponseBuffer } from './connection-response-reader'
+import { ConnectionRequestBuffer } from './connection-request-writer'
 
 export class SocketConnector {
     private residualBuffer: Buffer | null = null
@@ -12,7 +12,7 @@ export class SocketConnector {
 
     constructor(
         private _socket: Socket,
-        onData: (type: ResponseType, length: number, reader: ConnectionResponseReader) => void,
+        onData: (type: ResponseType, length: number, reader: ConnectionResponseBuffer) => void,
         onError: (error: unknown) => void
     ) {
         this._onError = (err) => {
@@ -36,7 +36,7 @@ export class SocketConnector {
                 
             this.residualBuffer = null
 
-            const reader = ConnectionResponseReader.from(currentBuffer) 
+            const reader = ConnectionResponseBuffer.from(currentBuffer) 
 
             while (reader.hasMore()) {
                 if (!reader.hasFullPacket()) {
@@ -57,7 +57,7 @@ export class SocketConnector {
     }
 
 
-    write(writer: ConnectionRequestWriter) {
+    write(writer: ConnectionRequestBuffer) {
         this._socket.write(writer.asBuffer())
     }
 

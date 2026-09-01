@@ -1,39 +1,41 @@
 import { ValueOF } from "../types"
 
 export const RequestTypes = {
-    SimpleQuery: "Q",
-    Parse: "P",
-    Bind: "B",
-    Execute: "E",
-    Sync: "S",
-    Password: "p",
-    Describe: 'D',
-    Close: "C"
+    SimpleQuery: 81, // "Q"
+    Parse: 80,       // "P"
+    Bind: 66,        // "B"
+    Execute: 69,     // "E"
+    Sync: 83,        // "S"
+    Password: 112,   // "p"
+    Describe: 68,    // "D"
+    Close: 67        // "C"
 } as const
 
 export type RequestType = ValueOF<typeof RequestTypes>
 
 
 export const ResponseTypes = {
-    RowDescription: "T",
-    DataRow: "D",
-    ComandComplete: "C",
-    ReadyForQuery: "Z",
-    ErrorResponse: "E",
-    NoticeResponse: "N",
-    Authentication: "R",
-    BackendKeyData: "K",
-    ParamaterStatus: "S",
-    ParseComplete: "1",
-    BindComplete: "2",
-    CloseComplete: "3",
-    ParameterDescription: "t",
-    NoData: "n",
-    Notice: "N",
-    NotificationResponse: "A",
-    SSLOk: "S",
-    SSLDenied: "N"
+    RowDescription: 84,       // "T"
+    DataRow: 68,              // "D"
+    ComandComplete: 67,       // "C"
+    ReadyForQuery: 90,        // "Z"
+    ErrorResponse: 69,        // "E"
+    NoticeResponse: 78,       // "N"
+    Authentication: 82,       // "R"
+    BackendKeyData: 75,       // "K"
+    ParamaterStatus: 83,      // "S"
+    ParseComplete: 49,        // "1"
+    BindComplete: 50,         // "2"
+    CloseComplete: 51,        // "3"
+    ParameterDescription: 116, // "t"
+    NoData: 110,              // "n"
+    Notice: 78,               // "N"
+    NotificationResponse: 65, // "A"
+    SSLOk: 83,                // "S"
+    SSLDenied: 78             // "N"
 } as const
+
+export type ResponseType = ValueOF<typeof ResponseTypes>
 
 
 export const DataTypeOids = {
@@ -46,7 +48,6 @@ export const DataTypeOids = {
     Varchar: 1043,
     Bpchar: 1042, 
 
-    
     Int2: 21, 
     Int4: 23, 
     Int8: 20, 
@@ -98,8 +99,6 @@ export type DataTypeOid = typeof DataTypeOids[keyof typeof DataTypeOids];
 
 export const INT4Length = 4
 
-export type ResponseType = ValueOF<typeof ResponseTypes>
-
 
 export const AuthenticationCodes = {
     Ok: 0,
@@ -114,9 +113,9 @@ export type AuthenticationCode = ValueOF<typeof AuthenticationCodes>
 
 
 export const TransactionStatuses = {
-    Idle: "I",
-    InTransactionBlock: "T",
-    FailedTransactionBlock: "E",
+    Idle: 73,                  // "I"
+    InTransactionBlock: 84,    // "T"
+    FailedTransactionBlock: 69, // "E"
 } as const
 
 export type TransactionStatus = ValueOF<typeof TransactionStatuses>

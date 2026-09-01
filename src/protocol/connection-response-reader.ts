@@ -1,4 +1,4 @@
-import { AuthenticationCode, DataTypeOid, DataTypeOids, ResponseType, TransactionStatus } from "./constants"
+import { AuthenticationCode, DataTypeOid, DataTypeOids, INT4Length, ResponseType, TransactionStatus } from "./constants"
 import { ChannelName, ColumnDescription } from "../types"
 import { PostgresError } from "../error"
 
@@ -61,17 +61,15 @@ export class ConnectionResponseBuffer {
     }
 
 
-    readRawBinaryString(length: number): string {
-        const text = this.buffer.toString('latin1', this.caret, this.caret + length)
-        this.caret += length
-        return text
-    }
-
-
     readBinaryDate(): Date {
         const daysSince2000 = this.readInt32()
         const ms = POSTGRES_EPOCH_MS + (daysSince2000 * 86400000)
         return new Date(ms)
+    }
+
+
+    readByte() {
+        return this.buffer[this.caret++]
     }
 
 
@@ -237,48 +235,34 @@ export class ConnectionResponseBuffer {
 
         return hash >>> 0
     }
-}
-
-
-export class ConnectionResponseReader {
-
-    private constructor(
-        private buffer: ConnectionResponseBuffer
-    ) {}
-
-
-    static from(buffer: Buffer) {
-        return new ConnectionResponseReader(ConnectionResponseBuffer.from(buffer))
-    }
-
 
     readType() {
-        return {type: this.buffer.readChar() as ResponseType, length: this.buffer.readInt32()}
+        return {type: this.readByte() as ResponseType, length: this.readInt32() - INT4Length}
     }
 
 
     readAuthentication() {
-        return this.buffer.readInt32() as AuthenticationCode
+        return this.readInt32() as AuthenticationCode
     }
 
     
     readMD5Salt() {
-        return this.buffer.readBytes(4)
+        return this.readBytes(4)
     }
 
 
     readParameterStatus() {
         return {
-            name: this.buffer.readCString(), 
-            value: this.buffer.readCString()
+            name: this.readCString(), 
+            value: this.readCString()
         }
     }
 
 
     readBackendKeyData() {
         return {
-            PID: this.buffer.readInt32(), 
-            secret: this.buffer.readInt32()
+            PID: this.readInt32(), 
+            secret: this.readInt32()
         }
     }
 
@@ -295,10 +279,10 @@ export class ConnectionResponseReader {
         let constraint = ''
 
         while (true) {
-            const marker = this.buffer.readChar()
+            const marker = this.readChar()
             if (marker === '\0') break
 
-            const text = this.buffer.readCString()
+            const text = this.readCString()
 
             switch (marker) {
                 case 'S': severity = text; break;
@@ -328,7 +312,7 @@ export class ConnectionResponseReader {
 
 
     readReadyForQuery() {
-        return this.buffer.readChar() as TransactionStatus
+        return this.readByte() as TransactionStatus
     }
 
 
@@ -336,7 +320,7 @@ export class ConnectionResponseReader {
         const mechanisms: string[] = []
 
         while (true) {
-            const mech = this.buffer.readCString()
+            const mech = this.readCString()
             if (mech === "") break
             mechanisms.push(mech)
         }
@@ -346,26 +330,26 @@ export class ConnectionResponseReader {
 
 
     readSaslMessage(length: number): string {
-        return this.buffer.readRawString(length - 4 - 4)
+        return this.readRawString(length - 4)
     }
 
 
     readRowDescription() {
-        const columnsCount = this.buffer.readInt16()
+        const columnsCount = this.readInt16()
         const columns = new Array<ColumnDescription>(columnsCount)
 
         for (let i = 0; i < columnsCount; i++) {
-            const name = this.buffer.readCString()
-            this.buffer.readInt32()
-            this.buffer.readInt16()
+            const name = this.readCString()
+            this.readInt32()
+            this.readInt16()
 
             columns[i] = {
                 name: name,
-                typeOID: this.buffer.readInt32() as DataTypeOid,
+                typeOID: this.readInt32() as DataTypeOid,
             }
             
-            this.buffer.readInt32()
-            this.buffer.readInt32()
+            this.readInt32()
+            this.readInt32()
         }
 
         return columns
@@ -373,11 +357,11 @@ export class ConnectionResponseReader {
 
 
     readDataRow(descriptions: ColumnDescription[], int8toBigint: boolean): Record<string, any> {
-        const fieldsCount = this.buffer.readInt16()
+        const fieldsCount = this.readInt16()
         const row: Record<string, any> = {}
 
         for (let i = 0; i < fieldsCount; i++) {
-            const fieldLength = this.buffer.readInt32()
+            const fieldLength = this.readInt32()
             const desc = descriptions[i]
             const key = desc.name
 
@@ -400,87 +384,91 @@ export class ConnectionResponseReader {
                             columnValueCache.set(i, cacheForColumn)
                         }
 
-                        const byteHash = this.buffer.getBufferHash(fieldLength)
+                        const byteHash = this.getBufferHash(fieldLength)
                         let cachedString = cacheForColumn.get(byteHash)
 
                         if (cachedString === undefined) {
-                            cachedString = this.buffer.readRawString(fieldLength)
-                            if (cacheForColumn.size < 512) {
-                                cacheForColumn.set(byteHash, cachedString)
+                            cachedString = this.readRawString(fieldLength)
+                            if (cacheForColumn.size > 512) {
+                                cacheForColumn.clear()
                             }
-                        } else {
-                            this.buffer.skipBytes(fieldLength)
+                            
+                            cacheForColumn.set(byteHash, cachedString)
+                        } 
+                        else {
+                            this.skipBytes(fieldLength)
                         }
                         row[key] = cachedString
-                    } else {
-                        row[key] = this.buffer.readRawString(fieldLength)
+                    } 
+                    else {
+                        row[key] = this.readRawString(fieldLength)
                     }
                 } break
 
                 case DataTypeOids.Int2: {
-                    row[key] = this.buffer.readInt16()
+                    row[key] = this.readInt16()
                 } break
 
                 case DataTypeOids.Int4: {
-                    row[key] = this.buffer.readInt32()
+                    row[key] = this.readInt32()
                 } break
 
                 case DataTypeOids.Int8: {
-                    row[key] = int8toBigint ? this.buffer.readBigInt64() : this.buffer.readInt64()
+                    row[key] = int8toBigint ? this.readBigInt64() : this.readInt64()
                 } break
 
                 case DataTypeOids.Float4: {
-                    row[key] = this.buffer.readFloat32()
+                    row[key] = this.readFloat32()
                 } break
                 
                 case DataTypeOids.Float8: {
-                    row[key] = this.buffer.readFloat64()
+                    row[key] = this.readFloat64()
                 } break
                 
                 case DataTypeOids.Bool: {
-                    row[key] = this.buffer.readBool()
+                    row[key] = this.readBool()
                 } break
 
                 case DataTypeOids.Bytea: {
-                    row[key] = this.buffer.readBytes(fieldLength)
+                    row[key] = this.readBytes(fieldLength)
                 } break
 
                 case DataTypeOids.Jsonb: {
-                    this.buffer.skipBytes(1)
-                    row[key] = JSON.parse(this.buffer.readRawString(fieldLength - 1))
+                    this.skipBytes(1)
+                    row[key] = JSON.parse(this.readRawString(fieldLength - 1))
                 } break
 
                 case DataTypeOids.Json: {
-                    row[key] = JSON.parse(this.buffer.readRawString(fieldLength))
+                    row[key] = JSON.parse(this.readRawString(fieldLength))
                 } break
 
                 case DataTypeOids.Date: {
-                    row[key] = this.buffer.readBinaryDate()
+                    row[key] = this.readBinaryDate()
                 } break
 
                 case DataTypeOids.Timestamp:   
                 case DataTypeOids.Timestamptz: {
-                    row[key] = this.buffer.readBinaryTimestamp()
+                    row[key] = this.readBinaryTimestamp()
                 } break
 
                 case DataTypeOids.Uuid: {
-                    row[key] = this.buffer.readUuid()
+                    row[key] = this.readUuid()
                 } break
 
                 case DataTypeOids.Time: {
-                    row[key] = this.buffer.readBinaryTime()
+                    row[key] = this.readBinaryTime()
                 } break
 
                 case DataTypeOids.Timetz: {
-                    row[key] = this.buffer.readBinaryTimetz()
+                    row[key] = this.readBinaryTimetz()
                 } break
 
                 case DataTypeOids.Numeric: {
-                    row[key] = this.buffer.readNumeric()
+                    row[key] = this.readNumeric()
                 } break
 
                 default: {
-                    this.buffer.skipBytes(fieldLength)
+                    this.skipBytes(fieldLength)
                     row[key] = null
                 } break
             }
@@ -491,50 +479,23 @@ export class ConnectionResponseReader {
 
 
     readNotificationResponse() {
-        this.buffer.readInt32()
-        const name = this.buffer.readCString() as ChannelName
-        const payload = this.buffer.readCString()
+        this.readInt32()
+        const name = this.readCString() as ChannelName
+        const payload = this.readCString()
         
         return {name, payload} 
     }
 
 
     readCommandComplete(): string {
-        return this.buffer.readCString()
+        return this.readCString()
     }
-
-
-    hasMore() {
-        return this.buffer.hasMore()
-    }
-
-
-    hasFullPacket() {
-        return this.buffer.hasFullPacket()
-    }
-
-    
-    getResidualBuffer() {
-        return this.buffer.getResidualBuffer()
-    }
-
-
-    readParseComplete() {}
-
-
-    readBindComplete() {}
 
 
     readParameterDescription() {
-        const count = this.buffer.readInt16()
+        const count = this.readInt16()
         for (let i = 0; i < count; i++) {
-            this.buffer.readInt32()
+            this.readInt32()
         }
-    }
-
-    readNoData() {}
-
-    skip(count: number) {
-        this.buffer.skipBytes(count)
     }
 }

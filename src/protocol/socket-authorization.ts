@@ -1,4 +1,3 @@
-import { ConnectionRequestWriter } from "./connection-request-writer"
 import { calculateScramAuth, generateNonce } from "../security/sasl"
 import { SocketConnector } from "./socket-connector"
 import { AuthenticationCodes, ResponseType, ResponseTypes } from "./constants"
@@ -7,9 +6,10 @@ import { ErrCertificateFileNotFound, ErrDatabaseNotFound, ErrNonceMismatch, ErrP
 import { Future } from "fluent-future"
 import { connect } from "node:tls"
 import { createConnection, Socket } from "node:net"
-import { ConnectionResponseReader } from "./connection-response-reader"
 import { ConnectionConfig } from "../types"
 import { readFileSync } from "node:fs"
+import { ConnectionRequestBuffer } from "./connection-request-writer"
+import { ConnectionResponseBuffer } from "./connection-response-reader"
 
 
 export const createSocket = (config: ConnectionConfig) => {
@@ -29,7 +29,7 @@ export const upgradeSocket = (socket: Socket, config: ConnectionConfig) => {
 
     const { future, reject, resolve } = Future.withResolvers<Socket, PostgresError>()
 
-    const writer = ConnectionRequestWriter.new()
+    const writer = ConnectionRequestBuffer.new(2048)
 
     const onError = () => {
         cleanup()
@@ -108,7 +108,7 @@ export const upgradeSocket = (socket: Socket, config: ConnectionConfig) => {
 
 export const authorizeSocket = (socket: Socket, config: ConnectionConfig) => {
     const { future, reject, resolve } = Future.withResolvers<Socket, PostgresError>()
-    const writer = ConnectionRequestWriter.new()
+    const writer = ConnectionRequestBuffer.new(2048)
 
     const nonce = generateNonce()
     let clientMessage = ''
@@ -121,7 +121,7 @@ export const authorizeSocket = (socket: Socket, config: ConnectionConfig) => {
     )
 
 
-    function handle(type: ResponseType, length: number, reader: ConnectionResponseReader) {
+    function handle(type: ResponseType, length: number, reader: ConnectionResponseBuffer) {
         switch (type) {
             case ResponseTypes.Authentication: {
                 Authentication(length, reader)
@@ -154,7 +154,7 @@ export const authorizeSocket = (socket: Socket, config: ConnectionConfig) => {
     }
 
 
-    function Authentication(length: number, reader: ConnectionResponseReader) {
+    function Authentication(length: number, reader: ConnectionResponseBuffer) {
         switch (reader.readAuthentication()) {
             case AuthenticationCodes.Ok: break
 

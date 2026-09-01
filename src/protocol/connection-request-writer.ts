@@ -83,9 +83,16 @@ export class ConnectionRequestBuffer {
         return this
     }
 
+    writeByte(byte: number) {
+        this.ensureCapacity(1)
+        this.buffer[this.offset++] = byte
+
+        return this
+    }
+
 
     startRequest(requestType: RequestType) {
-        this.writeChar(requestType)
+        this.writeByte(requestType)
 
         this.lastRequestLenByteOffset = this.offset
         return this.writeInt32(0)
@@ -119,22 +126,9 @@ export class ConnectionRequestBuffer {
         this.offset = 0
         this.lastRequestLenByteOffset = 0
     }
-}
-
-
-export class ConnectionRequestWriter {
-    private constructor (
-        private buffer: ConnectionRequestBuffer
-    ) {}
-
-    static new() {
-        return new ConnectionRequestWriter(
-            ConnectionRequestBuffer.new(65536)
-        )
-    }
 
     writeQuery(text: string) {
-        this.buffer.startRequest(RequestTypes.SimpleQuery)
+        this.startRequest(RequestTypes.SimpleQuery)
             .writeCString(text)
             .endRequest()
             
@@ -143,7 +137,7 @@ export class ConnectionRequestWriter {
 
 
     writeParse(name: string | "", text: string) {
-        this.buffer.startRequest(RequestTypes.Parse)
+        this.startRequest(RequestTypes.Parse)
             .writeCString(name)
             .writeCString(text)
             .writeInt16(0)
@@ -154,7 +148,7 @@ export class ConnectionRequestWriter {
 
 
     writeDescribe(statementName: string | "") {
-        this.buffer.startRequest(RequestTypes.Describe)
+        this.startRequest(RequestTypes.Describe)
             .writeChar('S')
             .writeCString(statementName)
             .endRequest();
@@ -165,7 +159,7 @@ export class ConnectionRequestWriter {
 
     writeBind(portName: string | "", statementName: string | "", params: (string | null)[]) {
 
-        const request = this.buffer.startRequest(RequestTypes.Bind)
+        const request = this.startRequest(RequestTypes.Bind)
             .writeCString(portName)
             .writeCString(statementName)
             .writeInt16(0)
@@ -183,7 +177,7 @@ export class ConnectionRequestWriter {
 
 
     writeClose(name: string) {
-        this.buffer.startRequest(RequestTypes.Close)
+        this.startRequest(RequestTypes.Close)
             .writeChar("P")                        
             .writeCString(name)                     
             .endRequest()
@@ -193,7 +187,7 @@ export class ConnectionRequestWriter {
 
 
     writeStartup(user: string, database: string) {
-        this.buffer.startMessage()
+        this.startMessage()
             .writeInt32(196608)
             .writeCString('user').writeCString(user)
             .writeCString('database').writeCString(database)
@@ -205,7 +199,7 @@ export class ConnectionRequestWriter {
 
 
     writeExecute(portName: string | "") {
-        this.buffer.startRequest(RequestTypes.Execute)
+        this.startRequest(RequestTypes.Execute)
             .writeCString(portName)
             .writeInt32(0)
             .endRequest()
@@ -215,14 +209,14 @@ export class ConnectionRequestWriter {
 
 
     writeSync() {
-        this.buffer.startRequest(RequestTypes.Sync).endRequest()
+        this.startRequest(RequestTypes.Sync).endRequest()
             
         return this
     }
 
 
     writeSSLRequest() {
-        this.buffer.startMessage()
+        this.startMessage()
             .writeInt32(80877103)
             .endRequest()
 
@@ -231,7 +225,7 @@ export class ConnectionRequestWriter {
 
 
     writePassword(password: string) {
-        this.buffer.startRequest(RequestTypes.Password)
+        this.startRequest(RequestTypes.Password)
             .writeCString(password)
             .endRequest()
         
@@ -240,7 +234,7 @@ export class ConnectionRequestWriter {
 
     
     writeSaslInitial(mechanism: string, clientFirstMessage: string) {
-        this.buffer.startRequest(RequestTypes.Password)
+        this.startRequest(RequestTypes.Password)
             .writeCString(mechanism)
             .writeInt32(Buffer.byteLength(clientFirstMessage, 'utf-8'))
             .writeString(clientFirstMessage)
@@ -251,21 +245,9 @@ export class ConnectionRequestWriter {
 
 
     writeSaslResponse(clientFinalMessage: string) {
-        this.buffer.startRequest(RequestTypes.Password)
+        this.startRequest(RequestTypes.Password)
             .writeString(clientFinalMessage)
             .endRequest()
-
-        return this
-    }
-
-
-    asBuffer() {
-        return this.buffer.asBuffer()
-    }
-
-
-    clear() {
-        this.buffer.clear()
 
         return this
     }
