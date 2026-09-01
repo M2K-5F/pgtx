@@ -111,9 +111,11 @@ describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
             insert into ${sql.ident(allTypesTableName)} ${sql.insert(testData)};
         `
 
-        const [row2] = await pool.query<AllTypesRow>`SELECT * FROM ${sql.ident(allTypesTableName)}`
+        const [row2] = await conn.query<AllTypesRow>`SELECT * FROM ${sql.ident(allTypesTableName)}`
 
         assert.deepStrictEqual(row2, testData, "Binary protocol type error")
+
+        pool.release(conn)
     })
 
     it("should return null for all fields when they are NULL in database", async () => {
