@@ -469,7 +469,7 @@ export class ConnectionResponseBuffer {
 
                 default: {
                     this.skipBytes(fieldLength)
-                    row[key] = null
+                    row[key] = undefined
                 } break
             }
         }

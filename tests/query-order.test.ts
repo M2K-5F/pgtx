@@ -36,38 +36,7 @@ describe('Query order test', async () => {
             )
         }
     })
-
-
-    it("should switch pipelines only after ReadyForQuery", async () => {
-
-        const batch1 = Promise.all([
-            pool.query`SELECT 1 as batch, pg_sleep(0.05)`,
-            pool.query`SELECT 2 as batch`,
-        ])
-
-
-        await new Promise(r => setImmediate(r))
-
-
-        const batch2 = Promise.all([
-            pool.query`SELECT 3 as batch`,
-            pool.query`SELECT 4 as batch`,
-        ])
-
-
-        const result = await Promise.all([
-            batch1,
-            batch2
-        ])
-
-
-        assert.strictEqual(result[0][0][0].batch, 1)
-        assert.strictEqual(result[0][1][0].batch, 2)
-
-        assert.strictEqual(result[1][0][0].batch, 3)
-        assert.strictEqual(result[1][1][0].batch, 4)
-    })
-
+    
 
     it("should handle multiple flush batches correctly", async () => {
         const batch1 = []

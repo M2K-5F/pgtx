@@ -1,5 +1,5 @@
 import { after, before, describe, it } from "node:test"
-import { Pool, sql } from "../src"
+import { Connection, Pool, sql } from "../src"
 import assert from "assert"
 
 const allTypesTableName = "all_datatypes_parsing_test"
@@ -27,18 +27,17 @@ type AllTypesRow = {
 }
 
 describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
-    const pool = new Pool({
+    const conn = await Connection.new({
         host: process.env.PGHOST!,
         user: process.env.PGUSER!,
         password: process.env.PGPASSWORD!,
         database: process.env.PGDATABASE!,
         port: Number(process.env.PGPORT),
-        max: Number(process.env.PGMAX),
         int8toBigint: true
     })
 
     before(async () => {
-        await pool.query`
+        await conn.query`
             create table if not exists ${sql.literal(allTypesTableName)} (
                 id_int4 integer primary key,
                 id_int2 smallint not null,
@@ -63,12 +62,11 @@ describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
     })
 
     after(async () => {
-        await pool.query`drop table if exists ${sql.literal(allTypesTableName)};`
-        await pool.close()
+        await conn.close()
     })
 
     it("should correctly parse absolutely all specified types in binary mode", async () => {
-        await pool.query`truncate table ${sql.ident(allTypesTableName)}`
+        await conn.query`truncate table ${sql.ident(allTypesTableName)}`
 
         const sampleBytea = Buffer.from([0xaa, 0xbb, 0xcc, 0xdd])
         const sampleUuid = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
@@ -95,8 +93,6 @@ describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
             timetz_col: "15:30:45.123+03:00"
         }
 
-        const conn = await pool.acquire()
-
         await conn.query`
             insert into ${sql.ident(allTypesTableName)} ${sql.insert(testData)};
         `
@@ -114,14 +110,12 @@ describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
         const [row2] = await conn.query<AllTypesRow>`SELECT * FROM ${sql.ident(allTypesTableName)}`
 
         assert.deepStrictEqual(row2, testData, "Binary protocol type error")
-
-        pool.release(conn)
     })
 
     it("should return null for all fields when they are NULL in database", async () => {
         const nullTableName = "all_types_null_test"
         
-        await pool.query`
+        await conn.query`
             create table if not exists ${sql.literal(nullTableName)} (
                 id_int4 integer, id_int2 smallint, id_int8 bigint, flag_bool boolean,
                 text_col text, varchar_col varchar(255), char_col char(10),
@@ -131,31 +125,31 @@ describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
                 numeric_col numeric(14,4), time_col time, timetz_col timetz
             );`
 
-        await pool.query`
+        await conn.query`
             insert into ${sql.literal(nullTableName)} 
             values (null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null);
         `
 
-        const rows = await pool.query<any>`SELECT * FROM ${sql.literal(nullTableName)}`
+        const rows = await conn.query<any>`SELECT * FROM ${sql.literal(nullTableName)}`
         const row = rows[0]
 
         Object.keys(row).forEach(key => {
-            assert.strictEqual(row[key], null, `Поле ${key} должно быть null`)
+            assert.strictEqual(row[key], null)
         })
 
-        await pool.query`drop table if exists ${sql.literal(nullTableName)}`
+        await conn.query`drop table if exists ${sql.literal(nullTableName)}`
     })
     
     it("should correctly parse numeric edge cases (negative, whole, NaN)", async () => {
         const numericTableName = "numeric_edge_cases_test"
 
-        await pool.query`
+        await conn.query`
             create table if not exists ${sql.literal(numericTableName)} (
                 id integer primary key,
                 val numeric(20,6) not null
             );`
 
-        await pool.query`truncate table ${sql.ident(numericTableName)}`
+        await conn.query`truncate table ${sql.ident(numericTableName)}`
 
         const cases: [number, string][] = [
             [1, "0.000000"],
@@ -166,12 +160,12 @@ describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
         ]
 
         for (const [id, val] of cases) {
-            await pool.query`
+            await conn.query`
                 insert into ${sql.ident(numericTableName)} (id, val) values (${id}, ${val}::numeric)
             `
         }
 
-        const rows = await pool.query<{id: number, val: string}>`
+        const rows = await conn.query<{id: number, val: string}>`
             SELECT id, val FROM ${sql.ident(numericTableName)} ORDER BY id
         `
 
@@ -179,6 +173,6 @@ describe("Complete PostgreSQL Binary Datatypes Parsing Test", async () => {
             assert.strictEqual(row.val, cases[i][1], `numeric case id=${cases[i][0]}`)
         })
 
-        await pool.query`drop table if exists ${sql.literal(numericTableName)}`
+        await conn.query`drop table if exists ${sql.literal(numericTableName)}`
     })
 })

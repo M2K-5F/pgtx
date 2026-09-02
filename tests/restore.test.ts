@@ -1,32 +1,30 @@
-import { after, before, describe, it } from "node:test"
-import { Connection } from "../src/connection"
+import { after, describe, it } from "node:test"
 import { ErrConnectionClosed, PostgresError } from "../src/error"
 import assert, { rejects } from "assert"
 import { Future, Ok } from "fluent-future"
+import { Pool } from "../src"
 
 describe("Connection reconnect and close test", async () => {
+    const pool = new Pool({
+        host: process.env.PGHOST!,
+        user: process.env.PGUSER!,
+        password: process.env.PGPASSWORD!,
+        database: process.env.PGDATABASE!,
+        port: Number(process.env.PGPORT),
+        max: 2
+    })
 
-    const makeConnection = () => {
-        return Connection.new({
-            host: process.env.PGHOST!,
-            user: process.env.PGUSER!,
-            password: process.env.PGPASSWORD!,
-            database: process.env.PGDATABASE!,
-            port: Number(process.env.PGPORT)
-        })
-    }
+    after(async () => {
+        await pool.close()
+    })
 
     describe("Reconnect behavior", async () => {
-
-        let conn: Connection
-
-        before(async () => {
-            conn = await makeConnection()
-        })
+        const conn = await pool.acquire()
 
         after(async () => {
-            await conn.close()
+            pool.release(conn)
         })
+
 
         it("should recover and serve queries after the socket is forcibly destroyed", async () => {
             const before = await conn.query`SELECT 1 as value`
@@ -129,9 +127,8 @@ describe("Connection reconnect and close test", async () => {
 
 
     describe("Close behavior", async () => {
-
         it("should resolve immediately when closing an already-idle connection", async () => {
-            const conn = await makeConnection()
+            const conn = await pool.acquire()
 
             await conn.query`SELECT 1 as value`
 
@@ -141,38 +138,42 @@ describe("Connection reconnect and close test", async () => {
 
             assert.ok(conn.isClosed)
             assert.ok(!conn.isOpened)
-            // idle close should be near-instant (destroys socket directly)
             assert.ok(elapsed < 100)
+            
+            pool.release(conn)
         })
 
         it("should reject new queries immediately after close", async () => {
-            const conn = await makeConnection()
+            const conn = await pool.acquire()
             await conn.close()
 
             await rejects(
                 async () => await conn.query`SELECT 1 as value`,
                 ErrConnectionClosed
             )
+
+            pool.release(conn)
         })
 
         it("should be idempotent when close is called multiple times", async () => {
-            const conn = await makeConnection()
+            const conn = await pool.acquire()
 
             await conn.close()
-            await conn.close() // should not throw, should resolve immediately
+            await conn.close()
 
             assert.ok(conn.isClosed)
+            
+            pool.release(conn)
         })
 
         it("should wait for in-flight queries to finish before closing", async () => {
-            const conn = await makeConnection()
+            const conn = await pool.acquire()
 
             const pending = conn.query`SELECT pg_sleep(0.2), 1 as value`
 
             const closePromise = conn.close()
 
-            // connection should report "closing" (not fully closed) while draining
-            assert.ok(conn.isClosed) // isClosed is true once _closing is set
+            assert.ok(conn.isClosed) 
             assert.ok(!conn.isOpened)
 
             const result = await pending
@@ -180,16 +181,16 @@ describe("Connection reconnect and close test", async () => {
 
             await closePromise
             assert.ok(conn.isClosed)
+            
+            pool.release(conn)
         })
 
         it("should reject queries issued while a drain-close is pending", async () => {
-            const conn = await makeConnection()
+            const conn = await pool.acquire()
 
             const pending = conn.query`SELECT pg_sleep(0.2), 1 as value`
             const closePromise = conn.close()
 
-            // any new query submitted after close() was called must be rejected,
-            // even though the connection hasn't physically closed yet
             await rejects(
                 async () => await conn.query`SELECT 2 as value`,
                 ErrConnectionClosed
@@ -197,10 +198,12 @@ describe("Connection reconnect and close test", async () => {
 
             await pending
             await closePromise
+            
+            pool.release(conn)
         })
 
         it("should destroy the underlying socket only after the batch queue is fully drained", async () => {
-            const conn = await makeConnection()
+            const conn = await pool.acquire()
 
             const q1 = conn.query`SELECT pg_sleep(0.1), 1 as value`
             const q2 = conn.query`SELECT pg_sleep(0.1), 2 as value`
@@ -220,10 +223,12 @@ describe("Connection reconnect and close test", async () => {
             await closePromise
 
             assert.strictEqual(destroySpy.called, true)
+            
+            pool.release(conn)
         })
 
         it("should not attempt to reconnect after the connection has been closed", async () => {
-            const conn = await makeConnection()
+            const conn = await pool.acquire()
             await conn.close()
             
 
@@ -235,6 +240,8 @@ describe("Connection reconnect and close test", async () => {
 
             await new Promise(r => setTimeout(r, 50))
             assert.strictEqual(reconnectCalled, false)
+            
+            pool.release(conn)
         })
     })
 })
